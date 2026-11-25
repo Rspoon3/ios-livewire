@@ -113,6 +113,18 @@ struct ChargingStatusRequest: Endpoint {
     var okCodes: Set<String>? { ["0", "-300"] }
 }
 
+// MARK: Location
+
+/// `GET bike/{id}/location`: the last GPS position the bike reported. Note `bike`, not `bikes`.
+struct BikeLocationRequest: Endpoint {
+    typealias Response = LocationResponse
+
+    let bikeID: String
+
+    var method: HTTPMethod { .get }
+    var path: String { "bike/\(bikeID)/location" }
+}
+
 // MARK: Analytics
 
 /// `GET bikes/{id}/ride/analytics`: totals for the week, month, 3 and 6 months up to `date`.

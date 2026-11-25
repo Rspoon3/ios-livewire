@@ -36,6 +36,13 @@ public final class AppModel {
     public private(set) var analytics: [String: AnalyticsReport] = [:]
     public private(set) var isLoadingAnalytics = false
 
+    /// Last reported position per bike id. Kept in memory only: it is not written to the snapshot file
+    /// that the widget reads, or anywhere else on disk.
+    public private(set) var locations: [String: BikeLocation] = [:]
+    /// Per-bike problems from the last location request.
+    public private(set) var locationErrors: [String: String] = [:]
+    private var locationRequests: Set<String> = []
+
     public let configuration: RuntimeConfiguration
     private let service: LiveWireService
     private let log = LWLogger("app")
@@ -80,6 +87,10 @@ public final class AppModel {
         do { try await service.signOut() } catch { log.error("Sign-out failed: \(error)") }
         snapshot = Snapshot()
         statusErrors = [:]
+        analytics = [:]
+        locations = [:]
+        locationErrors = [:]
+        locationRequests = []
         phase = .signedOut
         WidgetCenter.shared.reloadAllTimelines()
     }
@@ -193,6 +204,23 @@ public final class AppModel {
         }
         analytics = reports
     }
+
+    // MARK: Location
+
+    /// Fetches where the bike last reported itself. A failure is shown on the bike's screen and logged.
+    public func loadLocation(bikeID: String) async {
+        defer { locationRequests.insert(bikeID) }
+        do {
+            locations[bikeID] = try await service.api.bikeLocation(bikeID: bikeID)
+            locationErrors[bikeID] = nil
+        } catch {
+            log.error("Loading the location failed for bike \(bikeID): \(error)")
+            locationErrors[bikeID] = error.localizedDescription
+        }
+    }
+
+    /// Whether a location request has finished for this bike, so "no position yet" is not shown while loading.
+    public func hasLoadedLocation(bikeID: String) -> Bool { locationRequests.contains(bikeID) }
 
     // MARK: Logs
 

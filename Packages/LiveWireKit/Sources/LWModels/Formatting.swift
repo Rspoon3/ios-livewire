@@ -24,6 +24,21 @@ public enum Display {
         ))
     }
 
+    /// A speed in the reader's units: mph in the US, km/h elsewhere.
+    public static func speed(_ speed: Measurement<UnitSpeed>) -> String {
+        let unit: UnitSpeed = Locale.current.measurementSystem == .us ? .milesPerHour : .kilometersPerHour
+        return speed.converted(to: unit).formatted(.measurement(
+            width: .abbreviated,
+            usage: .asProvided,
+            numberFormatStyle: .number.precision(.fractionLength(0))
+        ))
+    }
+
+    /// `2 hours ago`
+    public static func relative(_ date: Date) -> String {
+        date.formatted(.relative(presentation: .named, unitsStyle: .wide))
+    }
+
     /// `4 hr, 9 min`
     public static func duration(_ duration: Duration) -> String {
         duration.formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated, maximumUnitCount: 2))

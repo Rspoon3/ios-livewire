@@ -19,6 +19,14 @@ import Testing
         #expect(text.contains("\"battery\":82"))
     }
 
+    @Test func masksTheSIMIdentifiersTheLocationResponseCarries() {
+        let body = Data(#"{"data":{"iccid":"8946080000000000000","vin":"1HD0TESTVIN000000","latitude":1.5,"longitude":2.5,"speed_km":0}}"#.utf8)
+        let text = Redactor.redactedBody(body)
+        #expect(!text.contains("8946080000000000000"))
+        #expect(!text.contains("TESTVIN"))
+        #expect(text.contains("\"speed_km\":0"))
+    }
+
     @Test func masksTheVINAndGPSPositions() {
         let body = Data(#"{"bikes":[{"id":"1","vin":"1HD0TESTVIN000000","model":"S2"}],"location":{"latitude":37.5,"longitude":-122.2},"ride":{"coordinates":[[1,2]],"distance":12}}"#.utf8)
         let text = Redactor.redactedBody(body)

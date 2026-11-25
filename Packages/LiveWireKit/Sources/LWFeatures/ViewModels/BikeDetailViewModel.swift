@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 import LWModels
 import Observation
@@ -53,9 +54,44 @@ final class BikeDetailViewModel {
         return rows
     }
 
+    // MARK: Location
+
+    var location: BikeLocation? { app.locations[bikeID] }
+    var locationProblem: String? { app.locationErrors[bikeID] }
+
+    /// `nil` until the bike has reported a position.
+    var mapCenter: MapCenter? {
+        location.map { MapCenter(latitude: $0.latitude, longitude: $0.longitude) }
+    }
+
+    var locationRows: [DetailRow] {
+        guard let location else { return [] }
+        var rows: [DetailRow] = []
+        if let lastSeen = location.lastSeen { rows.append(DetailRow(title: "Last seen", value: Display.relative(lastSeen))) }
+        if let speed = location.speed { rows.append(DetailRow(title: "Speed", value: Display.speed(speed))) }
+        if let altitude = location.altitude { rows.append(DetailRow(title: "Altitude", value: Display.distance(altitude))) }
+        return rows
+    }
+
+    /// True once a request has finished and the bike had no position to give.
+    var hasNoPosition: Bool { location == nil && locationProblem == nil && app.hasLoadedLocation(bikeID: bikeID) }
+
+    func loadLocation() async { await app.loadLocation(bikeID: bikeID) }
+
     /// With more than one paired bike, the widget needs to know which one to show by default.
     var offersWidgetDefault: Bool { app.pairedBikes.count > 1 }
 
     func useAsWidgetDefault() async { await app.select(bikeID: bikeID) }
-    func refresh() async { await app.refresh() }
+    func refresh() async {
+        await app.refresh()
+        await loadLocation()
+    }
+}
+
+/// Where the map is centered.
+struct MapCenter: Equatable {
+    let latitude: Double
+    let longitude: Double
+
+    var coordinate: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: latitude, longitude: longitude) }
 }

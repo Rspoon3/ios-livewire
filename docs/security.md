@@ -5,12 +5,12 @@ what it sends and where it is weak.
 
 ## Where the app talks
 
-Two hosts, both over HTTPS, nothing else:
+Two hosts for the account's data, both over HTTPS:
 
 * `https://accounts.us1.gigya.com` (sign-in, the identity provider LiveWire uses)
 * `https://mobileapi.livewire.com` (the LiveWire backend)
 
-There is no analytics, no crash reporting and no other server. App Transport Security is left at its
+The bike's detail screen also shows a map, which makes MapKit fetch map tiles from Apple for the area shown. There is no analytics, no crash reporting and no other server. App Transport Security is left at its
 default (HTTPS only, no exceptions). The app does **not** pin certificates.
 
 ## What is stored, and where
@@ -21,6 +21,7 @@ default (HTTPS only, no exceptions). The app does **not** pin certificates.
 | Gigya UID | Keychain | Long-lived. It can mint new session tokens, so treat it like a credential. |
 | Session token (JWT) | Keychain | Replaced when the backend answers 401. |
 | Device UUID | Keychain | Not a secret (it is in every URL), but pairing belongs to it, so it is kept. |
+| Bike position | Memory only | Fetched when the bike's screen opens and cleared on sign-out. Never written to the snapshot file or the widget. |
 | Bikes and last battery state | A file in the App Group container | Includes the **VIN**. Protected until first unlock. Shared with the widget. |
 | Logs | `Documents/Logs` and the App Group container | Redacted, see below. |
 

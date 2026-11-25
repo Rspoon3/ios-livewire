@@ -150,6 +150,94 @@ struct PairingDetail: Decodable, Sendable {
     let message: String?
 }
 
+// MARK: Location
+
+/// `{"data": {"latitude": …, "longitude": …, "altitude": …, "speed_km": …, "gps_time": …,
+/// "tcu_timestamp": …, "fix_type": …}}`, confirmed on a real bike. The response also carries `vin`,
+/// `iccid` and `viot_timestamp`, which are not decoded. Every field but the two coordinates may be
+/// missing, because a bike that has not reported yet may have no `data`.
+struct LocationResponse: Decodable, Sendable {
+    struct Reading: Decodable, Sendable {
+        let latitude: Double?
+        let longitude: Double?
+        let altitude: Double?
+        let speedKmh: Double?
+        let gpsTime: Date?
+        let reportedAt: Date?
+        let fixType: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case latitude, longitude, altitude
+            case speedKmh = "speed_km"
+            case gpsTime = "gps_time"
+            case reportedAt = "tcu_timestamp"
+            case fixType = "fix_type"
+        }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            latitude = try container.decodeNumberIfPresent(forKey: .latitude)
+            longitude = try container.decodeNumberIfPresent(forKey: .longitude)
+            altitude = try container.decodeNumberIfPresent(forKey: .altitude)
+            speedKmh = try container.decodeNumberIfPresent(forKey: .speedKmh)
+            gpsTime = try container.decodeTimeIfPresent(forKey: .gpsTime)
+            reportedAt = try container.decodeTimeIfPresent(forKey: .reportedAt)
+            fixType = try container.decodeNumberIfPresent(forKey: .fixType).map { Int($0) }
+        }
+    }
+
+    let data: Reading?
+
+    /// `nil` when the bike has not reported a position.
+    var location: BikeLocation? {
+        guard let reading = data, let latitude = reading.latitude, let longitude = reading.longitude else { return nil }
+        return BikeLocation(
+            latitude: latitude,
+            longitude: longitude,
+            altitude: reading.altitude.map { Measurement(value: $0, unit: UnitLength.meters) },
+            speed: reading.speedKmh.map { Measurement(value: $0, unit: UnitSpeed.kilometersPerHour) },
+            gpsTime: reading.gpsTime,
+            reportedAt: reading.reportedAt,
+            fixType: reading.fixType
+        )
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// A point in time that may be text (`2026-11-25T18:00:00Z`, `2026-11-19 03:02:28+0000`) or a number
+    /// of seconds or milliseconds since 1970. Returns `nil` when the key is missing, null, or not a
+    /// time this recognizes.
+    func decodeTimeIfPresent(forKey key: Key) throws -> Date? {
+        if let text = try? decodeIfPresent(String.self, forKey: key) {
+            return WireDate.parse(text)
+        }
+        if let number = try? decodeIfPresent(Double.self, forKey: key) {
+            // Anything past the year 5138 in seconds is really milliseconds.
+            let seconds = number > 100_000_000_000
+                ? Measurement(value: number, unit: UnitDuration.milliseconds).converted(to: .seconds).value
+                : number
+            return Date(timeIntervalSince1970: seconds)
+        }
+        return nil
+    }
+}
+
+enum WireDate {
+    private static let dateTimeWithOffset = Date.ISO8601FormatStyle()
+        .year().month().day()
+        .dateTimeSeparator(.space)
+        .time(includingFractionalSeconds: false)
+        .timeZone(separator: .omitted)
+
+    /// The forms the backend has used for times: ISO 8601 with or without fractional seconds, and the
+    /// `2026-11-19 03:02:28+0000` form seen in the bike list.
+    static func parse(_ text: String) -> Date? {
+        if let date = try? Date(text, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)) { return date }
+        if let date = try? Date(text, strategy: Date.ISO8601FormatStyle()) { return date }
+        return try? Date(text, strategy: dateTimeWithOffset)
+    }
+}
+
 // MARK: Charging status
 
 struct ChargingStatusResponse: Decodable, Sendable {

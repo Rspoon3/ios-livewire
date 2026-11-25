@@ -2,7 +2,7 @@ import Foundation
 
 /// Removes secrets and personal data from anything that is about to be written to a log file.
 ///
-/// Masked: credentials and tokens, the VIN, and GPS positions. Everything else in a response is kept,
+/// Masked: credentials and tokens, the VIN, cellular identifiers (the SIM's ICCID), and GPS positions. Everything else in a response is kept,
 /// because the log exists so the API can be mapped from real responses.
 ///
 /// Response bodies are logged on purpose (that is how the API gets mapped), so redaction is the
@@ -19,8 +19,8 @@ public enum Redactor {
         "uid", "uidsignature", "signature",
         "authorization", "apikey", "secret", "cookie",
         "email", "loginid",
-        // Identifies the bike, and so its owner.
-        "vin",
+        // Identifies the bike, and so its owner, and the SIM card in its modem.
+        "vin", "iccid", "imei", "imsi", "msisdn",
         // Where the bike is, or has been.
         "latitude", "longitude", "lat", "lng", "lon", "coordinates", "polyline", "geometry",
         "locationhistory", "location",

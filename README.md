@@ -26,6 +26,7 @@ Pull requests that add logs or fixtures from other bikes are welcome (read
 * Signs in with your LiveWire account (the password is never stored).
 * Pairs this install with your bike, once, at the bike, with a code from the bike's display.
 * Shows battery percentage, charging state, charge limit, range and odometer for **each bike on the account**.
+* Shows the bike's last reported position on a map, on its detail screen.
 * Shows ride and charging totals for the week, month, 3 and 6 months, with bar charts.
 * A widget (small, medium and Lock Screen sizes) that refreshes itself. It shows the app's default bike; with several bikes, choose it on the bike's screen.
 * Writes persistent, redacted logs, and shares them as one JSON file with one tap, so the API can be mapped
@@ -91,7 +92,7 @@ need push-triggered widget reloads and a server, which this project does not hav
 
 The password is never stored. The Gigya UID, session token and device UUID are in the Keychain. Logs are
 redacted (credentials, the VIN and GPS fields), but redaction works by key name, so read a log before you
-publish it. Nothing is sent anywhere except to LiveWire's two hosts. Details: [docs/security.md](docs/security.md).
+publish it. Nothing is sent anywhere except to LiveWire's two hosts and Apple Maps, which loads the map tiles. Details: [docs/security.md](docs/security.md).
 
 ## Credits
 

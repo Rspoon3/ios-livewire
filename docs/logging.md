@@ -34,7 +34,7 @@ Per process: a new file every 24 hours or at 5 MB, at most 14 files, at most 50 
 * Passwords (they are only sent to Gigya, and Gigya's response is not logged at all).
 * Any value under a key such as `password`, `jwt`, `token`, `uid`, `authorization`, `apiKey`, `email`
   (see `Redactor.sensitiveKeys`).
-* The VIN, and anything under a GPS key (`latitude`, `longitude`, `coordinates`, `polyline`, `location`, …).
+* The VIN, the SIM card's ICCID and other cellular identifiers, and anything under a GPS key (`latitude`, `longitude`, `coordinates`, `polyline`, `location`, …).
   The key stays in the log and the value becomes `<redacted>`, so the response shape is still visible.
 * The pairing code (`code` in the verify request body).
 * Anything shaped like a JWT or `Bearer …`, wherever it appears, including in free text.

@@ -90,7 +90,7 @@ Responses are `{"command_name", "detail", "pairedUserCount", "start_time", "end_
 | **Charging totals** | `GET bikes/{id}/charging/analytics?date=<ISO now>` | Confirmed |
 | Saved rides | `GET rides?type=CUSTOM&includeWeather=metric\|imperial` | Answers; always empty so far. Not used by the app |
 | One ride | `GET rides/{id}?includeLocationHistory=` | Not seen: there is no saved ride to fetch. Not used |
-| Location | `GET bike/{id}/location` | py-livewire only |
+| **Location** | `GET bike/{id}/location` | Confirmed |
 | Tire pressure | `GET bikes/{id}/status/tpms?modelCode=` | py-livewire only |
 | Charge limit, schedules, maintenance, roadside assistance, dealers, account | | py-livewire only |
 
@@ -144,6 +144,25 @@ Each has a `granularity` (`DAY`, `WEEK` or `MONTH`), a list of `buckets` and one
 * `totalChargeTime` and `totalDurationSeconds` are seconds.
 * Most numbers are rounded to whole numbers; efficiency has three or four decimals.
 * `bucketStart` is a plain date. Weeks start on Sunday.
+
+### Location
+
+The last GPS position the bike reported. Note the path is `bike/`, not `bikes/`.
+
+```json
+{"data":{"latitude":37.5,"longitude":-122.25,"altitude":125.6,"speed_km":0,"fix_type":3,
+ "gps_time":"2026-11-25T18:15:40.000Z","tcu_timestamp":"2026-11-25T18:16:12.000Z",
+ "viot_timestamp":"2026-11-25T18:16:14.688Z","vin":"1HD0XXXXXXXXXXXXX","iccid":"89000000000000000000"}}
+```
+
+* `altitude` is meters and `speed_km` is km/h (the name says so).
+* `gps_time` is when the GPS took the fix, `tcu_timestamp` when the bike's modem reported it, and
+  `viot_timestamp` when the backend received it. All three are ISO 8601 with milliseconds.
+* `fix_type` was `3` (a 3D fix) with the bike parked.
+* The response repeats the **VIN** and carries the **ICCID** of the SIM card in the bike's modem. The log
+  redactor masks both. The app does not read them.
+* Not seen: the response of a bike that has never reported a position (the app treats a missing `data` as
+  "no position yet").
 
 ### Saved rides
 

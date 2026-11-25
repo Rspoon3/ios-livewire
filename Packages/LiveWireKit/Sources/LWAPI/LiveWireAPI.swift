@@ -118,6 +118,13 @@ public final class LiveWireAPI: Sendable {
         try await send(ChargingStatusRequest(bikeID: bikeID)).status(bikeID: bikeID)
     }
 
+    // MARK: Location
+
+    /// The last position the bike reported, or `nil` if it has not reported one.
+    public func bikeLocation(bikeID: String) async throws -> BikeLocation? {
+        try await send(BikeLocationRequest(bikeID: bikeID)).location
+    }
+
     // MARK: Analytics
 
     /// Rides, distance and efficiency for the week, month, 3 and 6 months.

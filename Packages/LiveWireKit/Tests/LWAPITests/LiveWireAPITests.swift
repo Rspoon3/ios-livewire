@@ -230,6 +230,27 @@ private func router(
         #expect(request.url?.query?.contains("date=") == true)
     }
 
+    @Test func locationIsRequestedFromTheSingularBikePath() async throws {
+        let body = #"{"data":{"latitude":37.5,"longitude":-122.25,"altitude":30,"speed_km":0,"gps_time":"2026-11-25T18:00:00Z","tcu_timestamp":"2026-11-25T18:00:05.250Z","fix_type":3}}"#
+        let (api, transport, _) = try await signedInAPI { _, _ in (200, body) }
+
+        let location = try #require(try await api.bikeLocation(bikeID: "101"))
+
+        #expect(location.latitude == 37.5)
+        #expect(location.longitude == -122.25)
+        #expect(location.altitude == Measurement(value: 30, unit: .meters))
+        #expect(location.speed == Measurement(value: 0, unit: .kilometersPerHour))
+        #expect(location.fixType == 3)
+        #expect(location.gpsTime == Date(timeIntervalSince1970: 1_795_629_600))
+        #expect(location.reportedAt != nil)
+        #expect(transport.requests(containing: "bike/101/location").count == 1)
+    }
+
+    @Test func aBikeThatNeverReportedHasNoLocation() async throws {
+        let (api, _, _) = try await signedInAPI { _, _ in (200, #"{"data":null}"#) }
+        #expect(try await api.bikeLocation(bikeID: "101") == nil)
+    }
+
     @Test func aBodyThatDoesNotMatchNamesTheMissingField() async throws {
         let (api, _, _) = try await signedInAPI { _, _ in (200, #"{"bikes":[{"name":"no id"}]}"#) }
         do {
@@ -358,9 +379,47 @@ final class Counter: @unchecked Sendable {
         #expect(request.url?.query?.contains("date=2026-01-02T03:04:05.062Z") == true)
     }
 
+    @Test func locationUsesTheSingularBikePath() throws {
+        let request = try config.urlRequest(for: BikeLocationRequest(bikeID: "9"), token: "T")
+        #expect(request.url?.path == "/api/bike/9/location")
+    }
+
     @Test func labelsLeaveOutTheBrandAndSecrets() {
         #expect(ChargingStatusRequest(bikeID: "5").label == "GET bikes/5/charging/status")
         #expect(ListBikes(deviceUUID: "d").label == "GET getAllbikes/pairingStatus?deviceUUID=d")
         #expect(GigyaLogin(apiKey: "K", email: "e", password: "p").label == "POST gigya accounts.login")
+    }
+}
+
+@Suite struct LocationWireTests {
+    private func decode(_ json: String) throws -> LocationResponse {
+        try JSONDecoder().decode(LocationResponse.self, from: Data(json.utf8))
+    }
+
+    @Test func coordinatesMayArriveAsStrings() throws {
+        let location = try #require(try decode(#"{"data":{"latitude":"37.5","longitude":"-122.25"}}"#).location)
+        #expect(location.latitude == 37.5)
+        #expect(location.longitude == -122.25)
+        #expect(location.altitude == nil)
+        #expect(location.lastSeen == nil)
+    }
+
+    @Test func aPositionNeedsBothCoordinates() throws {
+        #expect(try decode(#"{"data":{"latitude":37.5}}"#).location == nil)
+        #expect(try decode("{}").location == nil)
+    }
+
+    @Test func timesInTheFormsTheBackendUses() throws {
+        // ISO 8601, the bike list's "+0000" form, and epoch seconds and milliseconds.
+        let expected = Date(timeIntervalSince1970: 1_795_629_600)
+        for text in [#""2026-11-25T18:00:00Z""#, #""2026-11-25 18:00:00+0000""#, "1795629600", "1795629600000"] {
+            let location = try #require(try decode(#"{"data":{"latitude":1,"longitude":2,"gps_time":\#(text)}}"#).location, "\(text)")
+            #expect(location.gpsTime == expected, "\(text)")
+        }
+    }
+
+    @Test func aTimeItDoesNotRecognizeIsIgnoredNotFatal() throws {
+        let location = try #require(try decode(#"{"data":{"latitude":1,"longitude":2,"gps_time":"last tuesday"}}"#).location)
+        #expect(location.gpsTime == nil)
     }
 }
