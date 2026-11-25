@@ -14,6 +14,13 @@ undocumented API.
 > want a Python client or a Home Assistant integration, start there. Its pairing tool (`livewire pair`)
 > was also how this project confirmed that pairing works at all.
 
+## Tested on
+
+A **2024 LiveWire S2 Mulholland**, with an iPhone on iOS 27.2. That is the only bike it has been tried on.
+Other LiveWire models, and bikes in other regions, may return different fields or behave differently.
+Pull requests that add logs or fixtures from other bikes are welcome (read
+[docs/logging.md](docs/logging.md) first, and remove anything personal).
+
 ## What it does
 
 * Signs in with your LiveWire account (the password is never stored).
