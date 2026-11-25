@@ -1,0 +1,26 @@
+# macOS / Xcode
+.DS_Store
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+
+# SwiftPM
+.build/
+.swiftpm/
+
+
+# Logs pulled from a device may contain VIN, GPS positions and ride data. Never commit them.
+logs/
+*.jsonl
+*.log
+
+# A log export saved next to the code (Share logs → Save to Files) holds ride data. Never commit it.
+ios-livewire-*.json
+
+# The full-size screenshot; docs/images/screenshot.png is the resized copy used by the README.
+/screenshot.png
+
+# Never commit app binaries or extracted contents
+*.ipa
+Payload/

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>ISGraphicIconConfiguration</key>
+			<dict>
+				<key>ISEnclosureColor</key>
+				<string>black</string>
+				<key>ISSymbolColor</key>
+				<string>green</string>
+				<key>ISSymbolName</key>
+				<string>motorcycle.fill</string>
+			</dict>
+		</dict>
+	</dict>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>LWAppGroup</key>
+	<string>$(LW_APP_GROUP)</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+</dict>
+</plist>

@@ -1,0 +1,255 @@
+import Foundation
+import LWAPI
+import LWLogging
+import LWModels
+import LWServices
+import LWStore
+import Observation
+import WidgetKit
+
+/// The ride and charging analytics of one bike. Either half can be missing when its request failed.
+public struct AnalyticsReport: Sendable {
+    public var rides: RideAnalytics?
+    public var charging: ChargingAnalytics?
+    public var ridesError: String?
+    public var chargingError: String?
+}
+
+/// State and actions behind every screen. Views read it; they never touch the API or the Keychain.
+@MainActor
+@Observable
+public final class AppModel {
+    public enum Phase: Equatable {
+        case launching
+        case signedOut
+        case ready
+    }
+
+    public private(set) var phase: Phase = .launching
+    public private(set) var snapshot = Snapshot()
+    public private(set) var isRefreshing = false
+    /// Per-bike problems from the last refresh (for example "not paired").
+    public private(set) var statusErrors: [String: String] = [:]
+    public var errorMessage: String?
+
+    public private(set) var rides: [RideSummary] = []
+    public private(set) var isLoadingRides = false
+    public private(set) var ridesError: String?
+
+    /// Ride and charging analytics per bike id.
+    public private(set) var analytics: [String: AnalyticsReport] = [:]
+    public private(set) var isLoadingAnalytics = false
+
+    public let configuration: RuntimeConfiguration
+    private let service: LiveWireService
+    private let log = LWLogger("app")
+
+    public init(configuration: RuntimeConfiguration) {
+        self.configuration = configuration
+        service = LiveWireService.live(configuration: configuration)
+    }
+
+    // MARK: Lifecycle
+
+    public func start() async {
+        snapshot = await service.cachedSnapshot()
+        if await service.isSignedIn() {
+            phase = .ready
+            await refresh()
+        } else {
+            phase = .signedOut
+        }
+    }
+
+    /// Call when the app returns to the foreground.
+    public func didBecomeActive() async {
+        LogExport.syncWidgetLogs(configuration.logLocations())
+        if phase == .ready { await refresh() }
+    }
+
+    // MARK: Session
+
+    public func signIn(email: String, password: String) async -> Bool {
+        errorMessage = nil
+        do {
+            try await service.signIn(email: email, password: password)
+            phase = .ready
+            await refresh()
+            return true
+        } catch {
+            log.warning("Sign-in failed: \(error)")
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    public func signOut() async {
+        do { try await service.signOut() } catch { log.error("Sign-out failed: \(error)") }
+        snapshot = Snapshot()
+        rides = []
+        statusErrors = [:]
+        phase = .signedOut
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    // MARK: Bikes
+
+    public var pairedBikes: [Bike] { snapshot.pairedBikes }
+
+    /// Fetches the bike list and the status of every paired bike.
+    public func refresh() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+        errorMessage = nil
+
+        do {
+            try await service.refreshBikes()
+        } catch {
+            handle(error, context: "bike list")
+            snapshot = await service.cachedSnapshot()
+            return
+        }
+        snapshot = await service.cachedSnapshot()
+
+        let service = service
+        let log = log
+        // One request per paired bike, in parallel. Most accounts have one; this is ready for more.
+        let results = await withTaskGroup(of: (String, String?).self) { group in
+            for bike in snapshot.pairedBikes {
+                group.addTask {
+                    do {
+                        _ = try await service.refreshStatus(bikeID: bike.id)
+                        return (bike.id, nil)
+                    } catch {
+                        log.error("Status refresh failed for bike \(bike.id): \(error)")
+                        return (bike.id, error.localizedDescription)
+                    }
+                }
+            }
+            var collected: [String: String?] = [:]
+            for await (id, message) in group { collected[id] = message }
+            return collected
+        }
+        statusErrors = results.compactMapValues { $0 }
+        snapshot = await service.cachedSnapshot()
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    public func select(bikeID: String?) async {
+        await service.selectBike(bikeID)
+        snapshot = await service.cachedSnapshot()
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    // MARK: Pairing
+
+    public func requestPairingCode(bikeID: String) async throws {
+        do { try await service.requestPairingCode(bikeID: bikeID) } catch {
+            log.error("Requesting a pairing code failed for bike \(bikeID): \(error)")
+            throw error
+        }
+    }
+
+    public func verifyPairingCode(bikeID: String, code: String) async throws {
+        do { try await service.verifyPairingCode(bikeID: bikeID, code: code) } catch {
+            log.error("Verifying the pairing code failed for bike \(bikeID): \(error)")
+            throw error
+        }
+    }
+
+    /// Waits for the backend to confirm the pairing, then refreshes everything.
+    public func finishPairing(bikeID: String) async throws -> Bool {
+        let paired: Bool
+        do { paired = try await service.waitUntilPaired(bikeID: bikeID) } catch {
+            log.error("Waiting for pairing failed for bike \(bikeID): \(error)")
+            throw error
+        }
+        if paired { await refresh() }
+        return paired
+    }
+
+    // MARK: Diagnostics
+
+    public func runDiagnostics(bike: Bike) async -> [DiagnosticLine] {
+        await service.diagnose(bike: bike)
+    }
+
+    // MARK: Rides
+
+    public func loadRides() async {
+        isLoadingRides = true
+        defer { isLoadingRides = false }
+        do {
+            rides = try await service.api.myRides()
+            ridesError = nil
+            log.info("Loaded \(rides.count) ride(s)")
+        } catch {
+            ridesError = error.localizedDescription
+            log.error("Loading rides failed: \(error)")
+        }
+    }
+
+    /// Fetches the ride and charging analytics of every paired bike. Each call is logged by the HTTP
+    /// layer, and a failure of one does not stop the others.
+    public func loadAnalytics() async {
+        let service = service
+        let log = log
+        let bikes = snapshot.pairedBikes
+        isLoadingAnalytics = true
+        defer { isLoadingAnalytics = false }
+
+        let reports = await withTaskGroup(of: (String, AnalyticsReport).self) { group in
+            for bike in bikes {
+                group.addTask {
+                    var report = AnalyticsReport()
+                    do { report.rides = try await service.api.rideAnalytics(bikeID: bike.id) } catch {
+                        log.error("Ride analytics failed for bike \(bike.id): \(error)")
+                        report.ridesError = error.localizedDescription
+                    }
+                    do { report.charging = try await service.api.chargingAnalytics(bikeID: bike.id) } catch {
+                        log.error("Charging analytics failed for bike \(bike.id): \(error)")
+                        report.chargingError = error.localizedDescription
+                    }
+                    return (bike.id, report)
+                }
+            }
+            var collected: [String: AnalyticsReport] = [:]
+            for await (id, report) in group { collected[id] = report }
+            return collected
+        }
+        analytics = reports
+    }
+
+    public func loadRide(id: String) async throws -> JSONValue {
+        do { return try await service.api.ride(id: id, includeLocationHistory: false) } catch {
+            log.error("Loading ride \(id) failed: \(error)")
+            throw error
+        }
+    }
+
+    // MARK: Logs
+
+    var logLocations: LogLocations { configuration.logLocations() }
+
+    public func clearLogs() {
+        LogExport.clear(configuration.logLocations())
+        log.info("Logs cleared by the user")
+    }
+
+    public var logFileCount: Int {
+        let locations = configuration.logLocations()
+        return LogExport.logFiles(in: locations.appLogs).count + LogExport.logFiles(in: locations.widgetLogs).count
+    }
+
+    // MARK: Errors
+
+    private func handle(_ error: Error, context: String) {
+        log.error("Refreshing the \(context) failed: \(error)")
+        if case LiveWireAPIError.notSignedIn = error {
+            phase = .signedOut
+        } else {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
