@@ -1,5 +1,4 @@
 import Foundation
-import LWModels
 
 /// Removes secrets and personal data from anything that is about to be written to a log file.
 ///
@@ -30,30 +29,10 @@ public enum Redactor {
     /// Largest body written to a log line. Larger bodies are cut and marked.
     public static let maxBodyCharacters = 64_000
 
-    /// Masks sensitive keys at any depth. `extraKeys` are matched case-insensitively.
-    public static func redact(_ value: JSONValue, extraKeys: Set<String> = []) -> JSONValue {
-        let keys = sensitiveKeys.union(extraKeys.map { $0.lowercased() })
-        return redact(value, keys: keys)
-    }
-
-    private static func redact(_ value: JSONValue, keys: Set<String>) -> JSONValue {
-        switch value {
-        case .object(let object):
-            var result: [String: JSONValue] = [:]
-            for (key, child) in object {
-                result[key] = keys.contains(key.lowercased()) ? .string(mask) : redact(child, keys: keys)
-            }
-            return .object(result)
-        case .array(let array):
-            return .array(array.map { redact($0, keys: keys) })
-        case .string(let text):
-            return .string(scrubTokens(text))
-        default:
-            return value
-        }
-    }
-
     /// Compact, redacted, size-limited text for a request or response body.
+    ///
+    /// JSON is masked structurally: sensitive keys are replaced at any depth, and strings are scrubbed
+    /// for tokens. `extraKeys` are matched case-insensitively. Anything that is not JSON is scrubbed as text.
     public static func redactedBody(
         _ data: Data,
         extraKeys: Set<String> = [],
@@ -61,8 +40,14 @@ public enum Redactor {
     ) -> String {
         if data.isEmpty { return "<empty>" }
         let text: String
-        if let node = try? JSONDecoder().decode(JSONValue.self, from: data) {
-            text = redact(node, extraKeys: extraKeys).compactString
+        if let tree = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) {
+            let keys = sensitiveKeys.union(extraKeys.map { $0.lowercased() })
+            let masked = redact(tree, keys: keys)
+            let options: JSONSerialization.WritingOptions = [.sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed]
+            guard let output = try? JSONSerialization.data(withJSONObject: masked, options: options) else {
+                return "<unprintable JSON, \(data.count) bytes>"
+            }
+            text = String(decoding: output, as: UTF8.self)
         } else if let plain = String(data: data, encoding: .utf8) {
             text = scrubTokens(plain)
         } else {
@@ -72,6 +57,21 @@ public enum Redactor {
             return String(text.prefix(limit)) + "…<truncated \(text.count - limit) characters>"
         }
         return text
+    }
+
+    private static func redact(_ value: Any, keys: Set<String>) -> Any {
+        switch value {
+        case let object as [String: Any]:
+            return object.reduce(into: [String: Any]()) { result, pair in
+                result[pair.key] = keys.contains(pair.key.lowercased()) ? mask : redact(pair.value, keys: keys)
+            }
+        case let array as [Any]:
+            return array.map { redact($0, keys: keys) }
+        case let text as String:
+            return scrubTokens(text)
+        default:
+            return value
+        }
     }
 
     /// Masks JWTs and `Bearer` credentials in free text.

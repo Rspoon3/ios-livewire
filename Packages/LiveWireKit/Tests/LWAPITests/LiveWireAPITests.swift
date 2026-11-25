@@ -73,10 +73,10 @@ private func router(
     @Test func theAppMakesItsOwnLowercaseDeviceUUIDAndKeepsIt() async throws {
         let secrets = InMemorySecretStore()
         let api = LiveWireAPI(configuration: config, secrets: secrets, transport: MockTransport(router { _, _ in (200, "{}") }))
-        let first = try await api.currentDeviceUUID()
+        let first = try await api.deviceUUID()
         #expect(first == first.lowercased())
         #expect(UUID(uuidString: first) != nil)
-        #expect(try await api.currentDeviceUUID() == first)
+        #expect(try await api.deviceUUID() == first)
         #expect(try secrets.string(for: .deviceUUID) == first)
     }
 
@@ -84,10 +84,10 @@ private func router(
         let old = "F341AF78-7CB8-444C-B4AA-6D497500F6FA"
         let secrets = InMemorySecretStore([.deviceUUID: old])
         let api = LiveWireAPI(configuration: config, secrets: secrets, transport: MockTransport(router { _, _ in (200, "{}") }))
-        let replaced = try await api.currentDeviceUUID()
+        let replaced = try await api.deviceUUID()
         #expect(replaced == replaced.lowercased())
         #expect(replaced != old.lowercased())
-        #expect(try await api.currentDeviceUUID() == replaced)
+        #expect(try await api.deviceUUID() == replaced)
     }
 
     @Test func callsWithoutSigningInFail() async {
@@ -127,7 +127,9 @@ private func router(
         let status = try await api.chargingStatus(bikeID: "101")
         #expect(status.batteryLevel == 82)
         #expect(status.isCharging == false)
+        #expect(status.chargeLimit == 80)
         #expect(status.rangeMiles == 112.4)
+        #expect(status.dataAge == 720)
         #expect(transport.requests(containing: "bikes/101/charging/status").count == 1)
     }
 
@@ -219,15 +221,23 @@ private func router(
         }
     }
 
-    @Test func ridesParseAndKeepRaw() async throws {
-        let (api, transport, _) = try await signedInAPI { _, _ in (200, Fixture.rides) }
-        let rides = try await api.myRides(units: "metric")
-        #expect(rides.map(\.id) == ["ride-1", "ride-2"])
-        #expect(rides[0].displayName == "Morning loop")
-        #expect(rides[0].raw["subType"]?.textValue == "RECORDED")
-        let query = try #require(transport.requests(containing: "rides?").first?.url?.query)
-        #expect(query.contains("type=CUSTOM"))
-        #expect(query.contains("includeWeather=metric"))
+    @Test func analyticsDecodeFromTheResponse() async throws {
+        let rides = #"{"bikeId":"101","periods":[{"type":"WEEK","granularity":"DAY","buckets":[{"bucketStart":"2026-11-23","rideCount":3,"sumBatteryUsedPercent":25,"totalDistance":21,"totalEfficiencykWhPerKm":0.0763}],"summary":{"rideCount":3,"totalBatteryUsedPercent":25,"totalDistance":21,"totalDurationSeconds":3811,"totalEfficiencykWhPerKm":0.0763}}]}"#
+        let (api, transport, _) = try await signedInAPI { _, _ in (200, rides) }
+        let analytics = try await api.rideAnalytics(bikeID: "101")
+        #expect(analytics.period(.week)?.totals.rideCount == 3)
+        let request = try #require(transport.requests(containing: "ride/analytics").first)
+        #expect(request.url?.query?.contains("date=") == true)
+    }
+
+    @Test func aBodyThatDoesNotMatchNamesTheMissingField() async throws {
+        let (api, _, _) = try await signedInAPI { _, _ in (200, #"{"bikes":[{"name":"no id"}]}"#) }
+        do {
+            _ = try await api.bikes()
+            Issue.record("expected an error")
+        } catch LiveWireAPIError.unexpectedResponse(let message) {
+            #expect(message.contains("bikes[0].id is missing"), "\(message)")
+        }
     }
 
     @Test func formEncodingEscapesReservedCharacters() {
@@ -240,4 +250,62 @@ final class Counter: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
     func next() -> Int { lock.withLock { defer { value += 1 }; return value } }
+}
+
+@Suite struct WireTypesTests {
+    private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
+        try JSONDecoder().decode(T.self, from: Data(json.utf8))
+    }
+
+    @Test func numbersThatArriveAsStringsAreAccepted() throws {
+        let reading = try decode(ChargingStatusResponse.self, #"{"bikeChargingData":{"batteryPercentage":"82","range":"112.4","maxLimit":"90","timeToMaxLimit":"45","durationElapsed":"12","durationUnit":"MINUTES"}}"#)
+        let status = reading.status(bikeID: "1")
+        #expect(status.batteryLevel == 82)
+        #expect(status.rangeMiles == 112.4)
+        #expect(status.chargeLimit == 90)
+        #expect(status.minutesToLimit == 45)
+        #expect(status.dataAge == 720)
+    }
+
+    @Test func aZeroChargeLimitMeansNone() throws {
+        let response = try decode(ChargingStatusResponse.self, #"{"bikeChargingData":{"maxLimit":0}}"#)
+        #expect(response.status(bikeID: "1").chargeLimit == nil)
+    }
+
+    @Test func aMissingReadingDoesNotCrash() throws {
+        let status = try decode(ChargingStatusResponse.self, "{}").status(bikeID: "1")
+        #expect(status.batteryLevel == nil)
+        #expect(!status.isCharging)
+    }
+
+    @Test func aTextWhereANumberShouldBeIsAnError() {
+        #expect(throws: DecodingError.self) {
+            try decode(ChargingStatusResponse.self, #"{"bikeChargingData":{"batteryPercentage":"full"}}"#)
+        }
+    }
+
+    @Test func bikesMapToTheDomainModel() throws {
+        let response = try decode(BikesResponse.self, Fixture.bikes)
+        let bikes = response.bikes.map(\.bike)
+        #expect(bikes.map(\.id) == ["101", "102"])
+        #expect(bikes[0].isPrimary)
+        #expect(bikes[0].isPaired == true)
+        #expect(bikes[1].isPaired == false)
+        #expect(bikes[0].year == 2024)
+        #expect(bikes[0].displayName == "Test Bike One")
+    }
+
+    @Test func pairingAnswerWithADetailDocumentInsideAString() throws {
+        let answer = try decode(PairingCommandResponse.self, #"{"command_name":"C_pairing_code","detail":"{\"reason\":\"DEVICE_TIMEOUT\",\"message\":\"Device did not respond in time\"}","pairedUserCount":0,"status":402}"#)
+        #expect(answer.status == 402)
+        #expect(answer.commandName == "C_pairing_code")
+        #expect(answer.parsedDetail?.reason == "DEVICE_TIMEOUT")
+        #expect(answer.parsedDetail?.message == "Device did not respond in time")
+    }
+
+    @Test func errorCodesMayBeStringsOrNumbers() throws {
+        #expect(try decode(ErrorEnvelope.self, #"{"error":{"code":"3000"}}"#).error?.code == "3000")
+        #expect(try decode(ErrorEnvelope.self, #"{"error":{"code":3000}}"#).error?.code == "3000")
+        #expect(try decode(ErrorEnvelope.self, "{}").error == nil)
+    }
 }

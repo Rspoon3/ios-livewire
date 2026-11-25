@@ -45,10 +45,10 @@ The Xcode targets are thin shells. Everything lives in one Swift package, `Packa
 
 | Target | Role |
 |---|---|
-| `LWModels` | `Bike`, `ChargingStatus`, ride and charging analytics, lenient `JSONValue`. No dependencies. |
+| `LWModels` | `Bike`, `ChargingStatus`, and the ride and charging analytics, as plain `Sendable` structs. No dependencies. |
 | `LWLogging` | CocoaLumberjack file logging, JSON Lines files on disk, redaction, one-file JSON export. |
 | `LWSecureStorage` | Keychain access through [Valet](https://github.com/square/Valet). |
-| `LWAPI` | Gigya sign-in, session token, endpoints, error envelope. |
+| `LWAPI` | Gigya sign-in, session token, endpoints, error envelope, and the `Decodable` wire types. |
 | `LWStore` | Snapshot file shared with the widget through an App Group. |
 | `LWServices` | Facade that the app and the widget both use. |
 | `LWFeatures` | SwiftUI screens and the observable `AppModel`. |
@@ -66,8 +66,7 @@ The Xcode targets are thin shells. Everything lives in one Swift package, `Packa
    is built in (`APIConfiguration.defaultGigyaAPIKey`).
 4. **Pairing** needs you at the bike with the ignition on, not in propulsion mode and not charging. The
    backend waits about a minute for the bike. If it reports that the bike did not respond, see
-   [docs/api.md](docs/api.md#device-uuid-and-pairing-confirmed). The Pair screen also has a read-only
-   *Check what LiveWire can see* button.
+   [docs/api.md](docs/api.md#device-uuid-and-pairing-confirmed).
 5. To send logs, tap the share button. It is on the sign-in screen and under Settings → Share logs.
 
 ## Tests

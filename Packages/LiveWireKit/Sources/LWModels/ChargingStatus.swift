@@ -46,32 +46,11 @@ public struct ChargingStatus: Codable, Sendable, Hashable {
         self.fetchedAt = fetchedAt
     }
 
-    /// Parses the response body of `bikes/{id}/charging/status`.
-    public init(bikeID: String, json: JSONValue, fetchedAt: Date = Date()) {
-        let data = json["bikeChargingData"] ?? .null
-        self.init(
-            bikeID: bikeID,
-            batteryLevel: data["batteryPercentage"]?.doubleValue,
-            isCharging: data["chargingStatus"]?.boolValue ?? false,
-            isPluggedIn: data["pluggedIn"]?.boolValue ?? false,
-            chargeLimit: data["maxLimit"]?.intValue.flatMap { $0 == 0 ? nil : $0 },
-            minutesToLimit: data["timeToMaxLimit"]?.doubleValue,
-            rangeMiles: data["range"]?.doubleValue,
-            odometerMiles: data["odometer"]?.doubleValue,
-            dataAge: Self.age(
-                amount: data["durationElapsed"]?.doubleValue,
-                unit: data["durationUnit"]?.textValue
-            ),
-            trackingStatus: json["trackingStatus"]?.textValue,
-            fetchedAt: fetchedAt
-        )
-    }
-
     public var rangeKilometers: Double? { rangeMiles.map { $0 * 1.609344 } }
     public var odometerKilometers: Double? { odometerMiles.map { $0 * 1.609344 } }
 
     /// Units seen on a real bike: `seconds` and `minute` (singular). Unknown units yield `nil`.
-    static func age(amount: Double?, unit: String?) -> TimeInterval? {
+    public static func age(amount: Double?, unit: String?) -> TimeInterval? {
         guard let amount, let unit = unit?.lowercased() else { return nil }
         if unit.hasPrefix("sec") { return amount }
         if unit.hasPrefix("min") { return amount * 60 }

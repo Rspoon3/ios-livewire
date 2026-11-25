@@ -32,10 +32,6 @@ public final class AppModel {
     public private(set) var statusErrors: [String: String] = [:]
     public var errorMessage: String?
 
-    public private(set) var rides: [RideSummary] = []
-    public private(set) var isLoadingRides = false
-    public private(set) var ridesError: String?
-
     /// Ride and charging analytics per bike id.
     public private(set) var analytics: [String: AnalyticsReport] = [:]
     public private(set) var isLoadingAnalytics = false
@@ -86,7 +82,6 @@ public final class AppModel {
     public func signOut() async {
         do { try await service.signOut() } catch { log.error("Sign-out failed: \(error)") }
         snapshot = Snapshot()
-        rides = []
         statusErrors = [:]
         phase = .signedOut
         WidgetCenter.shared.reloadAllTimelines()
@@ -169,26 +164,7 @@ public final class AppModel {
         return paired
     }
 
-    // MARK: Diagnostics
-
-    public func runDiagnostics(bike: Bike) async -> [DiagnosticLine] {
-        await service.diagnose(bike: bike)
-    }
-
-    // MARK: Rides
-
-    public func loadRides() async {
-        isLoadingRides = true
-        defer { isLoadingRides = false }
-        do {
-            rides = try await service.api.myRides()
-            ridesError = nil
-            log.info("Loaded \(rides.count) ride(s)")
-        } catch {
-            ridesError = error.localizedDescription
-            log.error("Loading rides failed: \(error)")
-        }
-    }
+    // MARK: Analytics
 
     /// Fetches the ride and charging analytics of every paired bike. Each call is logged by the HTTP
     /// layer, and a failure of one does not stop the others.
@@ -219,13 +195,6 @@ public final class AppModel {
             return collected
         }
         analytics = reports
-    }
-
-    public func loadRide(id: String) async throws -> JSONValue {
-        do { return try await service.api.ride(id: id, includeLocationHistory: false) } catch {
-            log.error("Loading ride \(id) failed: \(error)")
-            throw error
-        }
     }
 
     // MARK: Logs

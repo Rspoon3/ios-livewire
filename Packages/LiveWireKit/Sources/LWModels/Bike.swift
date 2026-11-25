@@ -41,24 +41,6 @@ public struct Bike: Codable, Sendable, Identifiable, Hashable {
         self.isPaired = isPaired
     }
 
-    /// Parses one element of `getAllbikes/pairingStatus` → `bikes`.
-    public init?(json: JSONValue) {
-        guard let id = json["id"]?.textValue else { return nil }
-        self.init(
-            id: id,
-            vin: json["vin"]?.textValue,
-            name: json["name"]?.textValue,
-            make: json["make"]?.textValue,
-            model: json["model"]?.textValue,
-            modelCode: json["modelCode"]?.textValue,
-            modelNumber: json["modelNumber"]?.textValue,
-            year: json["year"]?.intValue,
-            color: json["color"]?.textValue,
-            isPrimary: json["primaryBike"]?.boolValue ?? false,
-            isPaired: json["pairingStatus"]?.boolValue
-        )
-    }
-
     public var displayName: String {
         if let name, !name.isEmpty { return name }
         let parts = [make, model].compactMap { $0 }.filter { !$0.isEmpty }

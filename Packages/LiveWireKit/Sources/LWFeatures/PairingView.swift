@@ -1,6 +1,5 @@
 import LWLogging
 import LWModels
-import LWServices
 import SwiftUI
 
 /// Pairs this install with a bike: the bike shows a 6-digit code on its display, which is typed here.
@@ -15,8 +14,6 @@ struct PairingView: View {
     @State private var code = ""
     @State private var isWorking = false
     @State private var message: String?
-    @State private var diagnostics: [DiagnosticLine] = []
-    @State private var isDiagnosing = false
 
     var body: some View {
         Form {
@@ -63,34 +60,6 @@ struct PairingView: View {
 
             if let message {
                 Section { Text(message).foregroundStyle(.red) }
-            }
-
-            Section {
-                Button {
-                    isDiagnosing = true
-                    Task {
-                        diagnostics = await model.runDiagnostics(bike: bike)
-                        isDiagnosing = false
-                    }
-                } label: {
-                    HStack {
-                        Label("Check what LiveWire can see", systemImage: "stethoscope")
-                        if isDiagnosing { Spacer(); ProgressView() }
-                    }
-                }
-                .disabled(isDiagnosing)
-                ForEach(diagnostics) { line in
-                    LabeledContent(line.name) {
-                        Text(line.outcome)
-                            .font(.footnote)
-                            .foregroundStyle(line.isOK ? Color.green : Color.red)
-                            .multilineTextAlignment(.trailing)
-                    }
-                }
-            } header: {
-                Text("Troubleshooting")
-            } footer: {
-                Text("Read-only. Everything is written to the log, so Share logs afterwards.")
             }
         }
         .navigationTitle("Pair bike")

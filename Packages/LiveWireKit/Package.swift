@@ -21,14 +21,13 @@ let package = Package(
         .package(url: "https://github.com/square/Valet.git", from: "5.1.0"),
     ],
     targets: [
-        // Pure value types and lenient JSON handling. No dependencies.
+        // Pure value types. No dependencies.
         .target(name: "LWModels"),
 
         // CocoaLumberjack file logging, redaction, export.
         .target(
             name: "LWLogging",
             dependencies: [
-                "LWModels",
                 .product(name: "CocoaLumberjackSwift", package: "CocoaLumberjack"),
             ]
         ),

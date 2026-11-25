@@ -3,8 +3,9 @@ import Foundation
 // Models for `bikes/{id}/ride/analytics` and `bikes/{id}/charging/analytics`.
 //
 // Both answer with the same envelope: `{bikeId, vin, periods: [...]}`. There are four periods
-// (`WEEK`, `MONTH`, `3M`, `6M`), each with `granularity` (`DAY`, `WEEK` or `MONTH`), a list of
-// `buckets` and one `summary`. Shapes confirmed against a real account on 2026-11-25.
+// (`WEEK`, `MONTH`, `3M`, `6M`), each with a `granularity` (`DAY`, `WEEK` or `MONTH`), a list of
+// `buckets` and one `summary`. The shapes were confirmed against a real account on 2026-11-25
+// (see docs/api.md). They decode straight from the response.
 
 /// The time range an analytics period covers.
 public enum AnalyticsPeriod: String, CaseIterable, Sendable, Hashable, Codable {
@@ -30,166 +31,191 @@ public enum AnalyticsGranularity: String, Sendable, Hashable, Codable {
     case month = "MONTH"
 }
 
-enum AnalyticsParsing {
+enum AnalyticsDate {
     /// Bucket starts are plain dates (`2026-11-01`). They become midnight in the current calendar.
-    static func day(_ text: String?) -> Date? {
-        guard let text else { return nil }
+    static func day(_ text: String) -> Date? {
         let parts = text.prefix(10).split(separator: "-").compactMap { Int($0) }
         guard parts.count == 3 else { return nil }
         return Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
-    }
-
-    static func periods<Period>(_ json: JSONValue, make: (JSONValue) -> Period?) -> [Period]? {
-        json["periods"]?.arrayValue?.compactMap(make)
     }
 }
 
 // MARK: Rides
 
-public struct RideBucket: Sendable, Hashable, Identifiable {
+public struct RideBucket: Sendable, Hashable, Identifiable, Decodable {
     public var id: String { startText }
-    public var startText: String
-    public var start: Date?
-    public var rideCount: Int
-    public var batteryUsedPercent: Double
-    /// Miles. Not stated by the backend. Inferred from the numbers: with miles, the energy per
-    /// 100% battery works out to about 10.3 kWh, matching the charging data and the bike's pack size.
-    public var distanceMiles: Double
+    /// `bucketStart`, a plain date such as `2026-11-01`.
+    public let startText: String
+    public let rideCount: Int
+    public let batteryUsedPercent: Double
+    /// Miles. The response gives no unit; miles is inferred (see docs/api.md).
+    public let distanceMiles: Double
     /// kWh per kilometre (the field name says so). `nil` when the bucket has no rides.
-    public var efficiencyKWhPerKm: Double?
+    public let efficiencyKWhPerKm: Double?
 
-    init(json: JSONValue) {
-        startText = json["bucketStart"]?.textValue ?? ""
-        start = AnalyticsParsing.day(startText)
-        rideCount = json["rideCount"]?.intValue ?? 0
-        batteryUsedPercent = json["sumBatteryUsedPercent"]?.doubleValue ?? 0
-        distanceMiles = json["totalDistance"]?.doubleValue ?? 0
-        efficiencyKWhPerKm = json["totalEfficiencykWhPerKm"]?.doubleValue
+    public var start: Date? { AnalyticsDate.day(startText) }
+
+    private enum CodingKeys: String, CodingKey {
+        case startText = "bucketStart"
+        case rideCount
+        case batteryUsedPercent = "sumBatteryUsedPercent"
+        case distanceMiles = "totalDistance"
+        case efficiencyKWhPerKm = "totalEfficiencykWhPerKm"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        startText = try container.decode(String.self, forKey: .startText)
+        rideCount = try container.decodeIfPresent(Int.self, forKey: .rideCount) ?? 0
+        batteryUsedPercent = try container.decodeIfPresent(Double.self, forKey: .batteryUsedPercent) ?? 0
+        distanceMiles = try container.decodeIfPresent(Double.self, forKey: .distanceMiles) ?? 0
+        efficiencyKWhPerKm = try container.decodeIfPresent(Double.self, forKey: .efficiencyKWhPerKm)
     }
 }
 
-public struct RideTotals: Sendable, Hashable {
-    public var rideCount: Int
-    public var batteryUsedPercent: Double
-    public var distanceMiles: Double
-    public var durationSeconds: Double
-    public var efficiencyKWhPerKm: Double?
-
-    init(json: JSONValue) {
-        rideCount = json["rideCount"]?.intValue ?? 0
-        batteryUsedPercent = json["totalBatteryUsedPercent"]?.doubleValue ?? 0
-        distanceMiles = json["totalDistance"]?.doubleValue ?? 0
-        durationSeconds = json["totalDurationSeconds"]?.doubleValue ?? 0
-        efficiencyKWhPerKm = json["totalEfficiencykWhPerKm"]?.doubleValue
-    }
+public struct RideTotals: Sendable, Hashable, Decodable {
+    public let rideCount: Int
+    public let batteryUsedPercent: Double
+    public let distanceMiles: Double
+    public let durationSeconds: Double
+    public let efficiencyKWhPerKm: Double?
 
     /// Watt-hours per mile, for display in the US.
     public var efficiencyWhPerMile: Double? {
         efficiencyKWhPerKm.map { $0 * 1000 * 1.609344 }
     }
-}
 
-public struct RideAnalyticsPeriod: Sendable, Hashable, Identifiable {
-    public var id: String { rawType }
-    public var rawType: String
-    public var period: AnalyticsPeriod?
-    public var granularity: AnalyticsGranularity?
-    public var buckets: [RideBucket]
-    public var totals: RideTotals
+    private enum CodingKeys: String, CodingKey {
+        case rideCount
+        case batteryUsedPercent = "totalBatteryUsedPercent"
+        case distanceMiles = "totalDistance"
+        case durationSeconds = "totalDurationSeconds"
+        case efficiencyKWhPerKm = "totalEfficiencykWhPerKm"
+    }
 
-    init?(json: JSONValue) {
-        guard let type = json["type"]?.textValue else { return nil }
-        rawType = type
-        period = AnalyticsPeriod(rawValue: type)
-        granularity = json["granularity"]?.textValue.flatMap(AnalyticsGranularity.init(rawValue:))
-        buckets = json["buckets"]?.arrayValue?.map(RideBucket.init(json:)) ?? []
-        totals = RideTotals(json: json["summary"] ?? .null)
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        rideCount = try container.decodeIfPresent(Int.self, forKey: .rideCount) ?? 0
+        batteryUsedPercent = try container.decodeIfPresent(Double.self, forKey: .batteryUsedPercent) ?? 0
+        distanceMiles = try container.decodeIfPresent(Double.self, forKey: .distanceMiles) ?? 0
+        durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds) ?? 0
+        efficiencyKWhPerKm = try container.decodeIfPresent(Double.self, forKey: .efficiencyKWhPerKm)
     }
 }
 
-public struct RideAnalytics: Sendable, Hashable {
-    public var bikeID: String?
-    public var periods: [RideAnalyticsPeriod]
+public struct RideAnalyticsPeriod: Sendable, Hashable, Identifiable, Decodable {
+    public var id: String { type }
+    /// `WEEK`, `MONTH`, `3M` or `6M`. Kept as sent so a new period is not lost.
+    public let type: String
+    public let granularity: String
+    public let buckets: [RideBucket]
+    public let totals: RideTotals
 
-    /// `nil` when the response has no `periods` array.
-    public init?(json: JSONValue) {
-        guard let periods = AnalyticsParsing.periods(json, make: RideAnalyticsPeriod.init(json:)) else { return nil }
-        self.periods = periods
-        bikeID = json["bikeId"]?.textValue
+    public var period: AnalyticsPeriod? { AnalyticsPeriod(rawValue: type) }
+    public var bucketSize: AnalyticsGranularity? { AnalyticsGranularity(rawValue: granularity) }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, granularity, buckets
+        case totals = "summary"
     }
+}
+
+public struct RideAnalytics: Sendable, Hashable, Decodable {
+    public let bikeID: String?
+    public let periods: [RideAnalyticsPeriod]
 
     public func period(_ period: AnalyticsPeriod) -> RideAnalyticsPeriod? {
         periods.first { $0.period == period }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case bikeID = "bikeId"
+        case periods
     }
 }
 
 // MARK: Charging
 
-public struct ChargingBucket: Sendable, Hashable, Identifiable {
+public struct ChargingBucket: Sendable, Hashable, Identifiable, Decodable {
     public var id: String { startText }
-    public var startText: String
-    public var start: Date?
-    public var sessionCount: Int
-    public var energyAddedKWh: Double
-    public var energyLostKWh: Double
-    public var batteryAddedPercent: Double
+    public let startText: String
+    public let sessionCount: Int
+    public let energyAddedKWh: Double
+    public let energyLostKWh: Double
+    public let batteryAddedPercent: Double
 
-    init(json: JSONValue) {
-        startText = json["bucketStart"]?.textValue ?? ""
-        start = AnalyticsParsing.day(startText)
-        sessionCount = json["sessionCount"]?.intValue ?? 0
-        energyAddedKWh = json["energyAddedKwh"]?.doubleValue ?? 0
-        energyLostKWh = json["energyLostKwh"]?.doubleValue ?? 0
-        batteryAddedPercent = json["sumBatteryAddedPercent"]?.doubleValue ?? 0
+    public var start: Date? { AnalyticsDate.day(startText) }
+
+    private enum CodingKeys: String, CodingKey {
+        case startText = "bucketStart"
+        case sessionCount
+        case energyAddedKWh = "energyAddedKwh"
+        case energyLostKWh = "energyLostKwh"
+        case batteryAddedPercent = "sumBatteryAddedPercent"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        startText = try container.decode(String.self, forKey: .startText)
+        sessionCount = try container.decodeIfPresent(Int.self, forKey: .sessionCount) ?? 0
+        energyAddedKWh = try container.decodeIfPresent(Double.self, forKey: .energyAddedKWh) ?? 0
+        energyLostKWh = try container.decodeIfPresent(Double.self, forKey: .energyLostKWh) ?? 0
+        batteryAddedPercent = try container.decodeIfPresent(Double.self, forKey: .batteryAddedPercent) ?? 0
     }
 }
 
-public struct ChargingTotals: Sendable, Hashable {
-    public var sessionCount: Int
-    public var energyAddedKWh: Double
-    public var energyLostKWh: Double
-    public var batteryAddedPercent: Double
+public struct ChargingTotals: Sendable, Hashable, Decodable {
+    public let sessionCount: Int
+    public let energyAddedKWh: Double
+    public let energyLostKWh: Double
+    public let batteryAddedPercent: Double
     /// Seconds (1958 for a single session, about 33 minutes).
-    public var chargeTimeSeconds: Double
+    public let chargeTimeSeconds: Double
 
-    init(json: JSONValue) {
-        sessionCount = json["sessionCount"]?.intValue ?? 0
-        energyAddedKWh = json["energyAddedKwh"]?.doubleValue ?? 0
-        energyLostKWh = json["energyLostKwh"]?.doubleValue ?? 0
-        batteryAddedPercent = json["totalBatteryAddedPercent"]?.doubleValue ?? 0
-        chargeTimeSeconds = json["totalChargeTime"]?.doubleValue ?? 0
+    private enum CodingKeys: String, CodingKey {
+        case sessionCount
+        case energyAddedKWh = "energyAddedKwh"
+        case energyLostKWh = "energyLostKwh"
+        case batteryAddedPercent = "totalBatteryAddedPercent"
+        case chargeTimeSeconds = "totalChargeTime"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionCount = try container.decodeIfPresent(Int.self, forKey: .sessionCount) ?? 0
+        energyAddedKWh = try container.decodeIfPresent(Double.self, forKey: .energyAddedKWh) ?? 0
+        energyLostKWh = try container.decodeIfPresent(Double.self, forKey: .energyLostKWh) ?? 0
+        batteryAddedPercent = try container.decodeIfPresent(Double.self, forKey: .batteryAddedPercent) ?? 0
+        chargeTimeSeconds = try container.decodeIfPresent(Double.self, forKey: .chargeTimeSeconds) ?? 0
     }
 }
 
-public struct ChargingAnalyticsPeriod: Sendable, Hashable, Identifiable {
-    public var id: String { rawType }
-    public var rawType: String
-    public var period: AnalyticsPeriod?
-    public var granularity: AnalyticsGranularity?
-    public var buckets: [ChargingBucket]
-    public var totals: ChargingTotals
+public struct ChargingAnalyticsPeriod: Sendable, Hashable, Identifiable, Decodable {
+    public var id: String { type }
+    public let type: String
+    public let granularity: String
+    public let buckets: [ChargingBucket]
+    public let totals: ChargingTotals
 
-    init?(json: JSONValue) {
-        guard let type = json["type"]?.textValue else { return nil }
-        rawType = type
-        period = AnalyticsPeriod(rawValue: type)
-        granularity = json["granularity"]?.textValue.flatMap(AnalyticsGranularity.init(rawValue:))
-        buckets = json["buckets"]?.arrayValue?.map(ChargingBucket.init(json:)) ?? []
-        totals = ChargingTotals(json: json["summary"] ?? .null)
+    public var period: AnalyticsPeriod? { AnalyticsPeriod(rawValue: type) }
+    public var bucketSize: AnalyticsGranularity? { AnalyticsGranularity(rawValue: granularity) }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, granularity, buckets
+        case totals = "summary"
     }
 }
 
-public struct ChargingAnalytics: Sendable, Hashable {
-    public var bikeID: String?
-    public var periods: [ChargingAnalyticsPeriod]
-
-    public init?(json: JSONValue) {
-        guard let periods = AnalyticsParsing.periods(json, make: ChargingAnalyticsPeriod.init(json:)) else { return nil }
-        self.periods = periods
-        bikeID = json["bikeId"]?.textValue
-    }
+public struct ChargingAnalytics: Sendable, Hashable, Decodable {
+    public let bikeID: String?
+    public let periods: [ChargingAnalyticsPeriod]
 
     public func period(_ period: AnalyticsPeriod) -> ChargingAnalyticsPeriod? {
         periods.first { $0.period == period }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case bikeID = "bikeId"
+        case periods
     }
 }

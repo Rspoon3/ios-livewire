@@ -88,10 +88,10 @@ Responses are `{"command_name", "detail", "pairedUserCount", "start_time", "end_
 | **Battery** | `GET bikes/{id}/charging/status` | Confirmed |
 | **Ride totals** | `GET bikes/{id}/ride/analytics?date=<ISO now>` | Confirmed |
 | **Charging totals** | `GET bikes/{id}/charging/analytics?date=<ISO now>` | Confirmed |
-| Saved rides | `GET rides?type=CUSTOM&includeWeather=metric\|imperial` | Answers; always empty so far |
-| One ride | `GET rides/{id}?includeLocationHistory=` | Not seen: there is no saved ride to fetch |
-| Location | `GET bike/{id}/location` | py-livewire only (the Diagnostics button calls it) |
-| Tire pressure | `GET bikes/{id}/status/tpms?modelCode=` | py-livewire only (Diagnostics button) |
+| Saved rides | `GET rides?type=CUSTOM&includeWeather=metric\|imperial` | Answers; always empty so far. Not used by the app |
+| One ride | `GET rides/{id}?includeLocationHistory=` | Not seen: there is no saved ride to fetch. Not used |
+| Location | `GET bike/{id}/location` | py-livewire only |
+| Tire pressure | `GET bikes/{id}/status/tpms?modelCode=` | py-livewire only |
 | Charge limit, schedules, maintenance, roadside assistance, dealers, account | | py-livewire only |
 
 ### Bikes
@@ -156,5 +156,6 @@ lists recorded rides has been found; the totals above are the only ride data thi
 * Errors mostly arrive as **HTTP 200** with `{"error": {"code": "...", "description": "..."}}`. `code "0"`
   is success. `3000` means this device is not paired, or the bike is unreachable.
 * Pairing calls report failure inside the body as `status` instead (see above).
-* Numbers and booleans may arrive as strings (`"82"`, `"true"`), so parsing is lenient (`JSONValue`).
+* The response types are plain `Decodable` structs (`Sources/LWAPI/WireTypes.swift` and `Sources/LWModels/Analytics.swift`). A body that does not match fails with a message that names the field, for example `bikes[0].id is missing`.
+* Some numbers arrive as strings (`"10"`, `"0.0"`); the charging-status reading decodes them in a custom `init(from:)` into plain `Double` and `Int` properties.
 * Unknown fields, periods and granularities are kept or ignored, never fatal.

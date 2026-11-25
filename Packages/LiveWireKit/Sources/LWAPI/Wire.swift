@@ -1,6 +1,5 @@
 import Foundation
 import LWLogging
-import LWModels
 
 /// Sends one request and writes the exchange to the log file.
 ///
@@ -12,7 +11,18 @@ struct Wire: Sendable {
 
     struct Response: Sendable {
         let status: Int
-        let body: JSONValue
+        let data: Data
+        /// What the request was, for error messages, e.g. `GET bikes/123/charging/status`.
+        let label: String
+
+        /// Decodes the body, or explains which part of it did not match.
+        func decode<T: Decodable>(_ type: T.Type = T.self) throws -> T {
+            do {
+                return try JSONDecoder().decode(T.self, from: data)
+            } catch let error as DecodingError {
+                throw LiveWireAPIError.unexpectedResponse("\(label): \(error.summary)")
+            }
+        }
     }
 
     /// - Parameters:
@@ -49,17 +59,42 @@ struct Wire: Sendable {
         }
 
         let elapsed = Self.milliseconds(since: start, clock: clock)
-        let body = JSONValue(data: data)
         if logBodies {
             log.info("← \(http.statusCode) \(label) (\(elapsed) ms) body=\(Redactor.redactedBody(data))")
         } else {
             log.info("← \(http.statusCode) \(label) (\(elapsed) ms) [\(data.count) bytes, body not logged]")
         }
-        return Response(status: http.statusCode, body: body)
+        return Response(status: http.statusCode, data: data, label: label)
     }
 
     private static func milliseconds(since start: ContinuousClock.Instant, clock: ContinuousClock) -> Int {
         let duration = start.duration(to: clock.now)
         return Int(duration.components.seconds * 1000 + duration.components.attoseconds / 1_000_000_000_000_000)
+    }
+}
+
+extension DecodingError {
+    /// A one-line description with the path to the field, e.g. `bikes[0].id is missing`.
+    var summary: String {
+        func path(_ context: Context) -> String {
+            context.codingPath.reduce("") { text, key in
+                if let index = key.intValue { return text + "[\(index)]" }
+                return text.isEmpty ? key.stringValue : text + "." + key.stringValue
+            }
+        }
+        switch self {
+        case .keyNotFound(let key, let context):
+            let parent = path(context)
+            return "\(parent.isEmpty ? "" : parent + ".")\(key.stringValue) is missing"
+        case .valueNotFound(_, let context):
+            return "\(path(context)) is null"
+        case .typeMismatch(_, let context):
+            return "\(path(context)) has the wrong type"
+        case .dataCorrupted(let context):
+            let where_ = path(context)
+            return where_.isEmpty ? "the body is not valid JSON" : "\(where_) is not valid"
+        @unknown default:
+            return "could not be decoded"
+        }
     }
 }

@@ -1,6 +1,5 @@
 import Foundation
 import LWLogging
-import LWModels
 import LWSecureStorage
 
 /// Owns the sign-in state: Gigya UID, device UUID and session token, all in the Keychain.
@@ -116,16 +115,17 @@ actor AuthSession {
 
         // The response includes profile data and session secrets, so only the outcome is logged.
         let response = try await wire.perform(request, label: "POST gigya accounts.login", logBodies: false)
-        let errorCode = response.body["errorCode"]?.intValue ?? 0
+        let login = try response.decode(GigyaLoginResponse.self)
+        let errorCode = login.errorCode ?? 0
         if errorCode != 0 {
-            let message = response.body["errorMessage"]?.textValue ?? "error \(errorCode)"
+            let message = login.errorMessage ?? "error \(errorCode)"
             log.warning("Gigya login failed: errorCode=\(errorCode) message=\(message)")
             if Self.credentialErrors.contains(errorCode) {
                 throw LiveWireAPIError.invalidCredentials("Wrong email or password, or the account setup is unfinished (\(errorCode)).")
             }
             throw LiveWireAPIError.gigya(code: errorCode, message: message)
         }
-        guard let uid = response.body["UID"]?.textValue else {
+        guard let uid = login.uid, !uid.isEmpty else {
             throw LiveWireAPIError.unexpectedResponse("Gigya login returned no UID")
         }
         log.info("Gigya login succeeded (UID received)")
@@ -140,20 +140,19 @@ actor AuthSession {
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
         for (name, value) in configuration.identity.headers { request.setValue(value, forHTTPHeaderField: name) }
-        request.httpBody = try JSONEncoder().encode([
-            "UID": uid,
-            "deviceUUID": deviceUUID,
-            "dataCenter": configuration.dataCenter,
-        ])
+        request.httpBody = try JSONEncoder().encode(
+            SessionRequest(uid: uid, deviceUUID: deviceUUID, dataCenter: configuration.dataCenter)
+        )
 
         let response = try await wire.perform(request, label: "POST session?brand=\(configuration.brand)")
-        guard let jwt = response.body["jwt"]?.textValue else {
-            let detail = response.body.path("error", "description")?.textValue ?? "HTTP \(response.status)"
-            throw LiveWireAPIError.sessionFailed(detail)
+        let session = try? response.decode(SessionResponse.self)
+        guard let jwt = session?.jwt, !jwt.isEmpty else {
+            let envelope = try? response.decode(ErrorEnvelope.self)
+            throw LiveWireAPIError.sessionFailed(envelope?.error?.description ?? "HTTP \(response.status)")
         }
         do { try secrets.set(jwt, for: .sessionToken) } catch { throw LiveWireAPIError.secureStorage("\(error)") }
         cachedToken = jwt
-        if let accepted = response.body["termsAccepted"]?.boolValue {
+        if let accepted = session?.termsAccepted {
             log.info("Session token stored (termsAccepted: \(accepted))")
         }
         return jwt

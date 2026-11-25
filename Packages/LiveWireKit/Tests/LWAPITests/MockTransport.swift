@@ -40,26 +40,22 @@ enum Fixture {
     static let gigyaBadPassword = #"{"errorCode":403042,"errorMessage":"invalid loginID or password"}"#
     static func session(_ jwt: String) -> String { #"{"jwt":"\#(jwt)","termsAccepted":true}"# }
 
+    /// The shapes are the ones a real bike returned on 2026-11-25; the values are invented.
     static let bikes = #"""
     {"bikes":[
-      {"id":101,"vin":"TESTVIN0000000001","name":"Test Bike One","make":"LiveWire","model":"S2 Del Mar","modelCode":"X1","year":"2024","primaryBike":true,"pairingStatus":true},
-      {"id":102,"vin":"TESTVIN0000000002","make":"LiveWire","model":"S2 Mulholland","year":2025,"primaryBike":false,"pairingStatus":"false"}
+      {"id":"101","vin":"TESTVIN0000000001","name":"Test Bike One","make":"LiveWire","model":"S2 Del Mar","modelCode":"X1","modelNumber":"0001","year":2024,"color":"Blue","colorCode":"B1","brandShortName":"LW","primaryBike":true,"pairingStatus":true,"createdTime":"2026-01-01 00:00:00+0000","modifiedTime":"2026-01-01 00:00:00+0000"},
+      {"id":"102","vin":"TESTVIN0000000002","make":"LiveWire","model":"S2 Mulholland","year":2025,"primaryBike":false,"pairingStatus":false}
     ]}
     """#
 
     static let chargingOK = #"""
-    {"error":{"code":"0","description":"Success"},"trackingStatus":"SAFE",
-     "bikeChargingData":{"batteryPercentage":"82","chargingStatus":"false","pluggedIn":"false","maxLimit":"100",
-       "timeToMaxLimit":"0","range":"112.4","odometer":"1840.2","durationElapsed":"12","durationUnit":"MINUTES"}}
+    {"bikeChargingData":{"batteryPercentage":82,"chargingStatus":false,"durationElapsed":"12","durationUnit":"minute",
+      "maxLimit":80,"odometer":1840.2,"pluggedIn":false,"range":112.4,"timeToMaxLimit":"0.0"},"trackingStatus":"SAFE"}
     """#
 
     static let chargingPartial = #"""
-    {"error":{"code":"-300","description":"Partial data"},"bikeChargingData":{"batteryPercentage":"40"}}
+    {"error":{"code":"-300","description":"Partial data"},"bikeChargingData":{"batteryPercentage":40}}
     """#
 
     static let notPaired = #"{"error":{"code":"3000","description":"Command manager api failed"}}"#
-
-    static let rides = #"""
-    {"rides":[{"id":"ride-1","name":"Morning loop","type":"CUSTOM","subType":"RECORDED","distance":12.5},{"rideId":"ride-2"}]}
-    """#
 }

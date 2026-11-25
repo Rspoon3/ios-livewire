@@ -6,10 +6,8 @@ import LWSecureStorage
 /// Client of the LiveWire mobile API.
 ///
 /// Endpoint paths and behavior come from the Android app as documented by
-/// [py-livewire](https://github.com/hass-livewire/py-livewire); the iOS app's Info.plist confirms
-/// the same backend and login provider. Nothing here has been verified against the iOS app's own
-/// code (it is FairPlay-encrypted), so treat `docs/api.md` as the source of truth and the log files
-/// as the evidence.
+/// [py-livewire](https://github.com/hass-livewire/py-livewire), and every response shape used here was
+/// confirmed against a real bike. `docs/api.md` is the reference; the wire types are in `WireTypes.swift`.
 public final class LiveWireAPI: Sendable {
     private let configuration: APIConfiguration
     private let auth: AuthSession
@@ -33,6 +31,7 @@ public final class LiveWireAPI: Sendable {
         await auth.hasCredentials()
     }
 
+    /// This install's device UUID (not a secret; the backend gets it in every URL).
     public func deviceUUID() async throws -> String {
         try await auth.deviceUUID()
     }
@@ -54,10 +53,7 @@ public final class LiveWireAPI: Sendable {
             "GET", "getAllbikes/pairingStatus",
             query: [("deviceUUID", deviceUUID)]
         )
-        guard let list = response.body["bikes"]?.arrayValue else {
-            throw LiveWireAPIError.unexpectedResponse("getAllbikes/pairingStatus has no \"bikes\" array")
-        }
-        return list.compactMap(Bike.init(json:))
+        return try response.decode(BikesResponse.self).bikes.map(\.bike)
     }
 
     /// `GET bikes/pairing/status/{id}`
@@ -67,18 +63,7 @@ public final class LiveWireAPI: Sendable {
             "GET", "bikes/pairing/status/\(bikeID)",
             query: [("deviceUUID", deviceUUID)]
         )
-        return response.body["pairingStatus"]?.boolValue ?? false
-    }
-
-    /// A read-only GET that returns the body as is, without checking the error envelope. For diagnostics:
-    /// the exchange is logged by `Wire`, so the log shows exactly what the backend said.
-    public func probe(_ path: String, query: [(String, String)] = []) async throws -> JSONValue {
-        try await call("GET", path, query: query, checkEnvelope: false).body
-    }
-
-    /// This install's device UUID (not a secret; the backend gets it in every URL).
-    public func currentDeviceUUID() async throws -> String {
-        try await auth.deviceUUID()
+        return try response.decode(PairingStatusResponse.self).pairingStatus
     }
 
     static let pairingRequestTimeout: TimeInterval = 120
@@ -94,8 +79,9 @@ public final class LiveWireAPI: Sendable {
             // The backend holds this request for about a minute while it waits for the bike.
             timeout: Self.pairingRequestTimeout
         )
-        if let status = response.body["status"]?.intValue, status != 200 {
-            throw LiveWireAPIError.pairing(Self.pairingFailureMessage(status: status, body: response.body))
+        let answer = try response.decode(PairingCommandResponse.self)
+        if let status = answer.status, status != 200 {
+            throw LiveWireAPIError.pairing(Self.pairingFailureMessage(answer, status: status))
         }
     }
 
@@ -105,11 +91,9 @@ public final class LiveWireAPI: Sendable {
     /// \"message\":\"Device did not respond in time\"}","pairedUserCount":0,"status":402}`. The backend
     /// waits about a minute for the bike to answer, so 402 means the bike never replied, not necessarily
     /// that it has no cellular connection.
-    static func pairingFailureMessage(status: Int, body: JSONValue) -> String {
-        let detail = body["detail"]?.textValue.map { JSONValue(data: Data($0.utf8)) }
-        let reason = detail?["reason"]?.textValue
-        let backendMessage = detail?["message"]?.textValue
-            ?? body.path("error", "description")?.textValue
+    static func pairingFailureMessage(_ answer: PairingCommandResponse, status: Int) -> String {
+        let reason = answer.parsedDetail?.reason
+        let backendMessage = answer.parsedDetail?.message
 
         let advice: String = switch (status, reason) {
         case (_, "DEVICE_TIMEOUT"):
@@ -131,15 +115,19 @@ public final class LiveWireAPI: Sendable {
         let response = try await call(
             "POST", "bikes/\(bikeID)/verify/code",
             query: [("deviceUUID", deviceUUID)],
-            body: .object(["code": .string(code)]),
+            body: VerifyCodeRequest(code: code),
             redactRequestKeys: ["code"],
             checkEnvelope: false
         )
-        let result = response.body["code"]?.intValue ?? response.body.path("error", "code")?.intValue
-        switch result {
+        let answer = try? response.decode(PairingCommandResponse.self)
+        let envelopeCode = (try? response.decode(ErrorEnvelope.self))?.error?.code.flatMap { Int($0) }
+        switch answer?.code ?? envelopeCode {
         case 4003: throw LiveWireAPIError.pairing("Too many wrong codes. Request a new one.")
         case 4004: throw LiveWireAPIError.pairing("That code is wrong.")
         default: try Self.validate(response, okCodes: ["0"])
+        }
+        if let answer, let status = answer.status, status != 200 {
+            throw LiveWireAPIError.pairing(Self.pairingFailureMessage(answer, status: status))
         }
     }
 
@@ -154,31 +142,10 @@ public final class LiveWireAPI: Sendable {
             "GET", "bikes/\(bikeID)/charging/status",
             okCodes: ["0", "-300"]
         )
-        return ChargingStatus(bikeID: bikeID, json: response.body)
+        return try response.decode(ChargingStatusResponse.self).status(bikeID: bikeID)
     }
 
-    // MARK: Rides
-
-    /// `GET rides?type=CUSTOM`: rides the user recorded or planned.
-    public func myRides(units: String = "imperial") async throws -> [RideSummary] {
-        let response = try await call(
-            "GET", "rides",
-            query: [("type", "CUSTOM"), ("includeWeather", units)]
-        )
-        guard let list = response.body["rides"]?.arrayValue else {
-            throw LiveWireAPIError.unexpectedResponse("rides has no \"rides\" array")
-        }
-        return list.compactMap(RideSummary.init(json:))
-    }
-
-    /// `GET rides/{id}`
-    public func ride(id: String, includeLocationHistory: Bool = false) async throws -> JSONValue {
-        let response = try await call(
-            "GET", "rides/\(id)",
-            query: [("includeLocationHistory", includeLocationHistory ? "true" : "false")]
-        )
-        return response.body["ride"] ?? response.body
-    }
+    // MARK: Analytics
 
     /// `GET bikes/{id}/ride/analytics`: rides, distance and efficiency for the week, month, 3 and 6 months.
     public func rideAnalytics(bikeID: String) async throws -> RideAnalytics {
@@ -186,10 +153,7 @@ public final class LiveWireAPI: Sendable {
             "GET", "bikes/\(bikeID)/ride/analytics",
             query: [("date", Self.now())]
         )
-        guard let analytics = RideAnalytics(json: response.body) else {
-            throw LiveWireAPIError.unexpectedResponse("ride/analytics has no \"periods\" array")
-        }
-        return analytics
+        return try response.decode(RideAnalytics.self)
     }
 
     /// `GET bikes/{id}/charging/analytics`: charging sessions and energy for the same periods.
@@ -198,10 +162,7 @@ public final class LiveWireAPI: Sendable {
             "GET", "bikes/\(bikeID)/charging/analytics",
             query: [("date", Self.now())]
         )
-        guard let analytics = ChargingAnalytics(json: response.body) else {
-            throw LiveWireAPIError.unexpectedResponse("charging/analytics has no \"periods\" array")
-        }
-        return analytics
+        return try response.decode(ChargingAnalytics.self)
     }
 
     // MARK: Plumbing
@@ -211,7 +172,7 @@ public final class LiveWireAPI: Sendable {
         _ method: String,
         _ path: String,
         query: [(String, String)] = [],
-        body: JSONValue? = nil,
+        body: (any Encodable & Sendable)? = nil,
         okCodes: Set<String> = ["0"],
         redactRequestKeys: Set<String> = [],
         checkEnvelope: Bool = true,
@@ -234,10 +195,10 @@ public final class LiveWireAPI: Sendable {
         _ method: String,
         _ path: String,
         query: [(String, String)],
-        body: JSONValue?,
+        body: (any Encodable & Sendable)?,
         token: String,
         redactRequestKeys: Set<String>,
-        timeout: TimeInterval? = nil
+        timeout: TimeInterval?
     ) async throws -> Wire.Response {
         var components = URLComponents(url: configuration.baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         components.queryItems = (query + [("brand", configuration.brand)]).map { URLQueryItem(name: $0.0, value: $0.1) }
@@ -259,23 +220,19 @@ public final class LiveWireAPI: Sendable {
 
     /// Errors mostly arrive with HTTP 200 as `{"error": {"code": …, "description": …}}`.
     static func validate(_ response: Wire.Response, okCodes: Set<String>) throws {
-        if let error = response.body["error"]?.objectValue, !error.isEmpty {
-            let code = error["code"]?.textValue ?? "nil"
-            if !okCodes.contains(code) {
-                let message = error["description"]?.textValue
-                    ?? error["message"]?.textValue
-                    ?? "Unknown error"
-                if code == "3000" {
-                    throw LiveWireAPIError.notPaired(
-                        "\(message): this device is not paired with the bike, or the bike is not reachable."
-                    )
-                }
-                throw LiveWireAPIError.api(code: code, message: message, status: response.status)
+        if let error = (try? response.decode(ErrorEnvelope.self))?.error, let code = error.code, !okCodes.contains(code) {
+            let message = error.description ?? error.message ?? "Unknown error"
+            if code == "3000" {
+                throw LiveWireAPIError.notPaired(
+                    "\(message): this device is not paired with the bike, or the bike is not reachable."
+                )
             }
+            throw LiveWireAPIError.api(code: code, message: message, status: response.status)
         }
         if response.status >= 400 {
-            let message = response.body.first(of: ["description", "detail", "message", "title"])?.textValue
-                ?? response.body.path("error", "description")?.textValue
+            let body = try? response.decode(HTTPErrorBody.self)
+            let message = body?.text
+                ?? (try? response.decode(ErrorEnvelope.self))?.error?.description
                 ?? "HTTP \(response.status)"
             throw LiveWireAPIError.http(status: response.status, message: message)
         }

@@ -40,7 +40,7 @@ private struct RideSection: View {
             LabeledContent("Battery used", value: "\(Int(period.totals.batteryUsedPercent.rounded()))%")
             BucketChart(
                 points: period.buckets.compactMap { bucket in bucket.start.map { ($0, bucket.distanceMiles) } },
-                granularity: period.granularity,
+                granularity: period.bucketSize,
                 unit: "mi"
             )
         }
@@ -57,7 +57,7 @@ private struct ChargingSection: View {
             LabeledContent("Time charging", value: duration(period.totals.chargeTimeSeconds))
             BucketChart(
                 points: period.buckets.compactMap { bucket in bucket.start.map { ($0, bucket.energyAddedKWh) } },
-                granularity: period.granularity,
+                granularity: period.bucketSize,
                 unit: "kWh"
             )
         }
