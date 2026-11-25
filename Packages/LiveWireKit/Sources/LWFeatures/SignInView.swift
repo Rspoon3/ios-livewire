@@ -1,21 +1,22 @@
 import SwiftUI
 
 struct SignInView: View {
-    let model: AppModel
-    @State private var email = ""
-    @State private var password = ""
-    @State private var isSigningIn = false
+    @State private var viewModel: SignInViewModel
+
+    init(model: AppModel) {
+        _viewModel = State(initialValue: SignInViewModel(auth: model, logExport: model.logExport))
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Email", text: $email)
+                    TextField("Email", text: $viewModel.email)
                         .textContentType(.username)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    SecureField("Password", text: $password)
+                    SecureField("Password", text: $viewModel.password)
                         .textContentType(.password)
                 } header: {
                     Text("LiveWire account")
@@ -23,25 +24,20 @@ struct SignInView: View {
                     Text("Your password is sent to LiveWire's sign-in provider and is not stored. Only a sign-in token is kept, in the Keychain.")
                 }
 
-                if let message = model.errorMessage {
+                if let message = viewModel.errorMessage {
                     Section { Text(message).foregroundStyle(.red) }
                 }
 
                 Section {
                     Button {
-                        isSigningIn = true
-                        Task {
-                            _ = await model.signIn(email: email, password: password)
-                            password = ""
-                            isSigningIn = false
-                        }
+                        Task { await viewModel.submit() }
                     } label: {
                         HStack {
                             Text("Sign in")
-                            if isSigningIn { Spacer(); ProgressView() }
+                            if viewModel.isSigningIn { Spacer(); ProgressView() }
                         }
                     }
-                    .disabled(email.isEmpty || password.isEmpty || isSigningIn)
+                    .disabled(!viewModel.canSubmit)
                 }
 
                 Section {
@@ -51,7 +47,11 @@ struct SignInView: View {
                 }
             }
             .navigationTitle("Sign in")
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { LogShareButton(model: model).labelStyle(.iconOnly) } }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    LogShareButton(export: viewModel.logExport).labelStyle(.iconOnly)
+                }
+            }
         }
     }
 }

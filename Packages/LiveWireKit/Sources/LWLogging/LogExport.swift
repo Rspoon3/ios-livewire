@@ -1,4 +1,5 @@
 import Foundation
+import LWFileSystem
 
 /// Where log files live.
 ///
@@ -33,36 +34,47 @@ public struct LogLocations: Sendable {
     }
 }
 
-public enum LogExport {
+/// Reads, merges and clears the log files, through a `FileSystem`.
+public struct LogExport: Sendable {
+    public let locations: LogLocations
+    private let fileSystem: any FileSystem
+
+    public init(locations: LogLocations, fileSystem: any FileSystem = DiskFileSystem()) {
+        self.locations = locations
+        self.fileSystem = fileSystem
+    }
+
     /// Copies the widget's log files next to the app's, so one folder holds everything.
     @discardableResult
-    public static func syncWidgetLogs(_ locations: LogLocations) -> Int {
+    public func syncWidgetLogs() -> Int {
         guard locations.widgetLogs != locations.mirroredWidgetLogs else { return 0 }
-        let fileManager = FileManager.default
-        try? fileManager.createDirectory(at: locations.mirroredWidgetLogs, withIntermediateDirectories: true)
+        try? fileSystem.createDirectory(at: locations.mirroredWidgetLogs)
 
         var copied = 0
         for source in logFiles(in: locations.widgetLogs) {
             let destination = locations.mirroredWidgetLogs.appendingPathComponent(source.lastPathComponent)
-            let sourceDate = modificationDate(source)
-            if let existing = modificationDate(destination), let sourceDate, existing >= sourceDate {
+            if let existing = fileSystem.modificationDate(of: destination),
+               let sourceDate = fileSystem.modificationDate(of: source),
+               existing >= sourceDate {
                 continue
             }
-            try? fileManager.removeItem(at: destination)
-            if (try? fileManager.copyItem(at: source, to: destination)) != nil { copied += 1 }
+            try? fileSystem.remove(destination)
+            if (try? fileSystem.copy(from: source, to: destination)) != nil { copied += 1 }
         }
         return copied
     }
 
     /// All `.log` files in a directory, oldest first.
-    public static func logFiles(in directory: URL) -> [URL] {
-        let urls = (try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.contentModificationDateKey]
-        )) ?? []
+    public func logFiles(in directory: URL) -> [URL] {
+        let urls = (try? fileSystem.contentsOfDirectory(at: directory)) ?? []
         return urls
             .filter { $0.pathExtension == "log" }
-            .sorted { (modificationDate($0) ?? .distantPast) < (modificationDate($1) ?? .distantPast) }
+            .sorted { (fileSystem.modificationDate(of: $0) ?? .distantPast) < (fileSystem.modificationDate(of: $1) ?? .distantPast) }
+    }
+
+    /// How many log files the app and the widget have written.
+    public var logFileCount: Int {
+        logFiles(in: locations.appLogs).count + logFiles(in: locations.widgetLogs).count
     }
 
     /// Merges the app and widget logs into one chronologically sorted JSON file in the temporary
@@ -73,14 +85,14 @@ public enum LogExport {
     /// as `{"raw": "…"}` instead of being dropped.
     ///
     /// - Parameter metadata: extra facts for the `export` object, such as app version and OS version.
-    public static func combinedLog(_ locations: LogLocations, metadata: [String: String] = [:]) throws -> URL? {
+    public func combinedLog(metadata: [String: String] = [:]) throws -> URL? {
         LWLogging.flush()
-        syncWidgetLogs(locations)
+        syncWidgetLogs()
 
         var lines: [String] = []
         for directory in [locations.appLogs, locations.widgetLogs] {
             for file in logFiles(in: directory) {
-                guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+                guard let text = try? fileSystem.readString(file) else { continue }
                 lines.append(contentsOf: text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init))
             }
         }
@@ -89,7 +101,7 @@ public enum LogExport {
         // Lines start with a fixed-width ISO timestamp, so a plain sort is chronological.
         lines.sort()
 
-        let entries = lines.map(validJSONObject(_:))
+        let entries = lines.map(Self.validJSONObject(_:))
         let now = Date()
         var header = metadata
         header["exportedAt"] = now.formatted(.iso8601)
@@ -103,18 +115,36 @@ public enum LogExport {
 
         let stamp = now.formatted(.iso8601.year().month().day().dateSeparator(.omitted).time(includingFractionalSeconds: false).timeSeparator(.omitted))
         removeOldExports()
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ios-livewire-\(stamp).json")
-        try output.write(to: url, atomically: true, encoding: .utf8)
+        let url = fileSystem.temporaryDirectory.appendingPathComponent("ios-livewire-\(stamp).json")
+        try fileSystem.write(Data(output.utf8), to: url)
         return url
     }
 
+    /// The file to share: the combined log, or a placeholder when nothing has been logged yet.
+    public func shareFile(metadata: [String: String] = [:]) throws -> URL {
+        if let url = try combinedLog(metadata: metadata) { return url }
+        let url = fileSystem.temporaryDirectory.appendingPathComponent("ios-livewire-empty.json")
+        try fileSystem.write(Data("{\"entryCount\":0,\"entries\":[]}\n".utf8), to: url)
+        return url
+    }
+
+    /// Deletes every log file (app, widget and mirrored copies).
+    public func clear() {
+        for directory in [locations.appLogs, locations.widgetLogs, locations.mirroredWidgetLogs] {
+            for file in logFiles(in: directory) {
+                try? fileSystem.remove(file)
+            }
+        }
+    }
+
     /// Earlier exports are deleted, so shared copies of the logs do not pile up in the temporary directory.
-    private static func removeOldExports() {
-        let directory = FileManager.default.temporaryDirectory
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        for name in names where name.hasPrefix("ios-livewire-") && (name.hasSuffix(".json") || name.hasSuffix(".jsonl")) {
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+    private func removeOldExports() {
+        let directory = fileSystem.temporaryDirectory
+        for url in (try? fileSystem.contentsOfDirectory(at: directory)) ?? [] {
+            let name = url.lastPathComponent
+            if name.hasPrefix("ios-livewire-"), name.hasSuffix(".json") || name.hasSuffix(".jsonl") {
+                try? fileSystem.remove(url)
+            }
         }
     }
 
@@ -126,18 +156,5 @@ public enum LogExport {
         }
         let wrapped = (try? JSONSerialization.data(withJSONObject: ["raw": line])) ?? Data("{}".utf8)
         return String(decoding: wrapped, as: UTF8.self)
-    }
-
-    /// Deletes every log file (app, widget and mirrored copies).
-    public static func clear(_ locations: LogLocations) {
-        for directory in [locations.appLogs, locations.widgetLogs, locations.mirroredWidgetLogs] {
-            for file in logFiles(in: directory) {
-                try? FileManager.default.removeItem(at: file)
-            }
-        }
-    }
-
-    private static func modificationDate(_ url: URL) -> Date? {
-        try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
     }
 }

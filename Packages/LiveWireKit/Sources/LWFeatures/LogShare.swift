@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// A log export the share sheet builds only when it is opened, so one tap on the share button is
 /// all it takes. The file merges the app and widget logs, sorted by time.
 struct LogShareItem: Transferable {
-    let locations: LogLocations
+    let export: LogExport
 
     /// What the person reading the log needs to know. No names or identifiers.
     static var metadata: [String: String] {
@@ -24,15 +24,11 @@ struct LogShareItem: Transferable {
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(exportedContentType: .json) { item in
             do {
-                if let url = try LogExport.combinedLog(item.locations, metadata: Self.metadata) { return SentTransferredFile(url) }
+                return SentTransferredFile(try item.export.shareFile(metadata: Self.metadata))
             } catch {
                 LWLogger("share").error("Preparing the log export failed: \(error)")
                 throw error
             }
-            // Nothing logged yet. Share a one-line file rather than failing.
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("ios-livewire-empty.json")
-            try Data("{\"entryCount\":0,\"entries\":[]}\n".utf8).write(to: url, options: .atomic)
-            return SentTransferredFile(url)
         }
     }
 }
@@ -40,11 +36,11 @@ struct LogShareItem: Transferable {
 /// One-tap log sharing. Available on every screen, including setup and sign-in, because that is
 /// where the first failures show up.
 struct LogShareButton: View {
-    let model: AppModel
+    let export: LogExport
 
     var body: some View {
         ShareLink(
-            item: LogShareItem(locations: model.logLocations),
+            item: LogShareItem(export: export),
             preview: SharePreview("ios-livewire logs", image: Image(systemName: "doc.text"))
         ) {
             Label("Share logs", systemImage: "square.and.arrow.up")

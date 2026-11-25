@@ -1,19 +1,19 @@
 import Foundation
+import LWFileSystem
 import LWModels
 import Testing
 
 @testable import LWStore
 
 @Suite struct SnapshotStoreTests {
-    private func makeStore() -> (SnapshotStore, URL) {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lw-store-\(UUID().uuidString)", isDirectory: true)
-        return (SnapshotStore(directory: directory), directory)
+    private let directory = URL(filePath: "/memory/Group/Snapshot", directoryHint: .isDirectory)
+
+    private func makeStore(_ files: InMemoryFileSystem = InMemoryFileSystem()) -> SnapshotStore {
+        SnapshotStore(directory: directory, fileSystem: files)
     }
 
     @Test func roundTrip() async {
-        let (store, directory) = makeStore()
-        defer { try? FileManager.default.removeItem(at: directory) }
-
+        let store = makeStore()
         await store.update {
             $0.bikes = [Bike(id: "1", name: "A", isPaired: true)]
             $0.statuses["1"] = ChargingStatus(bikeID: "1", batteryLevel: 55, isCharging: true)
@@ -26,21 +26,40 @@ import Testing
         #expect(loaded.updatedAt != nil)
     }
 
+    @Test func twoStoresOnTheSameFileSeeTheSameData() async {
+        // The app and the widget are two processes with one file.
+        let files = InMemoryFileSystem()
+        await makeStore(files).update { $0.selectedBikeID = "9" }
+        #expect(await makeStore(files).load().selectedBikeID == "9")
+    }
+
     @Test func emptyWhenMissingOrCorrupt() async throws {
-        let (store, directory) = makeStore()
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let files = InMemoryFileSystem()
+        let store = makeStore(files)
         #expect(await store.load() == Snapshot())
 
-        try Data("not json".utf8).write(to: directory.appendingPathComponent("snapshot.json"))
+        try files.write(Data("not json".utf8), to: directory.appendingPathComponent("snapshot.json"))
         #expect(await store.load() == Snapshot())
     }
 
+    @Test func aFailedWriteLeavesTheOldSnapshotInPlace() async {
+        let files = InMemoryFileSystem()
+        let store = makeStore(files)
+        await store.update { $0.selectedBikeID = "1" }
+
+        files.failNext(.write, with: CocoaError(.fileWriteOutOfSpace))
+        await store.update { $0.selectedBikeID = "2" }
+
+        #expect(await store.load().selectedBikeID == "1")
+    }
+
     @Test func clearRemovesTheFile() async {
-        let (store, directory) = makeStore()
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let files = InMemoryFileSystem()
+        let store = makeStore(files)
         await store.update { $0.selectedBikeID = "9" }
         await store.clear()
         #expect(await store.load() == Snapshot())
+        #expect(!files.fileExists(at: directory.appendingPathComponent("snapshot.json")))
     }
 }
 

@@ -8,11 +8,11 @@ public struct BatteryWidget: Widget {
     public init() {}
 
     public var body: some WidgetConfiguration {
-        AppIntentConfiguration(kind: Self.kind, intent: BatteryIntent.self, provider: BatteryProvider()) { entry in
+        StaticConfiguration(kind: Self.kind, provider: BatteryProvider()) { entry in
             BatteryWidgetView(entry: entry)
         }
         .configurationDisplayName("Bike battery")
-        .description("Battery level and charging state of your bike. Long-press to choose which bike.")
+        .description("Battery level and charging state of your bike. With several bikes, choose the one to show in the app.")
         .supportedFamilies([.systemSmall, .systemMedium, .accessoryCircular, .accessoryRectangular, .accessoryInline])
     }
 }
@@ -45,7 +45,7 @@ struct BatteryWidgetView: View {
             Gauge(value: (level ?? 0) / 100) {
                 Image(systemName: entry.status?.isCharging == true ? "bolt.fill" : "battery.100")
             } currentValueLabel: {
-                Text(level.map { "\(Int($0.rounded()))" } ?? "–")
+                Text(level.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "–")
             }
             .gaugeStyle(.accessoryCircular)
 
@@ -58,7 +58,7 @@ struct BatteryWidgetView: View {
             }
 
         case .accessoryInline:
-            Text("\(entry.status?.isCharging == true ? "⚡︎ " : "")\(level.map { "\(Int($0.rounded()))%" } ?? "–") \(entry.bikeName)")
+            Text("\(entry.status?.isCharging == true ? "⚡︎ " : "")\(level.map { Display.percent($0) } ?? "–") \(entry.bikeName)")
 
         case .systemMedium:
             HStack(spacing: 16) {
@@ -90,7 +90,7 @@ struct BatteryWidgetView: View {
                 .stroke(color(level), style: StrokeStyle(lineWidth: 8, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             VStack(spacing: 0) {
-                Text(level.map { "\(Int($0.rounded()))%" } ?? "–").font(.title3.bold().monospacedDigit())
+                Text(level.map { Display.percent($0) } ?? "–").font(.title3.bold().monospacedDigit())
                 if entry.status?.isCharging == true { Image(systemName: "bolt.fill").font(.caption2).foregroundStyle(.green) }
             }
         }
@@ -100,10 +100,7 @@ struct BatteryWidgetView: View {
         guard let status = entry.status else { return "" }
         var parts: [String] = []
         if status.isCharging { parts.append("Charging") } else if status.isPluggedIn { parts.append("Plugged in") }
-        if let miles = status.rangeMiles {
-            parts.append(Measurement(value: miles, unit: UnitLength.miles)
-                .formatted(.measurement(width: .abbreviated, usage: .road, numberFormatStyle: .number.precision(.fractionLength(0)))))
-        }
+        if let range = status.range { parts.append(Display.distance(range)) }
         return parts.joined(separator: " · ")
     }
 

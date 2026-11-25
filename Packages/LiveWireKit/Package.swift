@@ -19,15 +19,21 @@ let package = Package(
         .package(url: "https://github.com/CocoaLumberjack/CocoaLumberjack.git", from: "3.9.0"),
         // Keychain access, including sharing between the app and the widget through an App Group.
         .package(url: "https://github.com/square/Valet.git", from: "5.1.0"),
+        // async/await for the widget's timeline provider.
+        .package(url: "https://github.com/Rspoon3/AsyncTimelineProvider.git", from: "1.0.0"),
     ],
     targets: [
         // Pure value types. No dependencies.
         .target(name: "LWModels"),
 
+        // The disk behind a protocol, so everything that reads or writes files can be tested in memory.
+        .target(name: "LWFileSystem"),
+
         // CocoaLumberjack file logging, redaction, export.
         .target(
             name: "LWLogging",
             dependencies: [
+                "LWFileSystem",
                 .product(name: "CocoaLumberjackSwift", package: "CocoaLumberjack"),
             ]
         ),
@@ -42,32 +48,37 @@ let package = Package(
         .target(name: "LWAPI", dependencies: ["LWModels", "LWLogging", "LWSecureStorage"]),
 
         // On-disk snapshot shared by the app and the widget (App Group container).
-        .target(name: "LWStore", dependencies: ["LWModels", "LWLogging"]),
+        .target(name: "LWStore", dependencies: ["LWModels", "LWLogging", "LWFileSystem"]),
 
         // Facade that composes API + store + keychain. Used by the app and the widget.
         .target(
             name: "LWServices",
-            dependencies: ["LWModels", "LWLogging", "LWSecureStorage", "LWAPI", "LWStore"]
+            dependencies: ["LWModels", "LWLogging", "LWSecureStorage", "LWAPI", "LWStore", "LWFileSystem"]
         ),
 
         // SwiftUI screens and their observable models.
         .target(
             name: "LWFeatures",
-            dependencies: ["LWModels", "LWLogging", "LWServices", "LWStore"]
+            dependencies: ["LWModels", "LWLogging", "LWServices", "LWStore", "LWFileSystem"]
         ),
 
         // WidgetKit widgets, intents and timeline provider.
         .target(
             name: "LWWidgets",
-            dependencies: ["LWModels", "LWLogging", "LWServices", "LWStore"]
+            dependencies: [
+                "LWModels", "LWLogging", "LWServices", "LWStore", "LWFileSystem",
+                .product(name: "AsyncTimelineProvider", package: "AsyncTimelineProvider"),
+            ]
         ),
 
         .testTarget(name: "LWModelsTests", dependencies: ["LWModels"]),
-        .testTarget(name: "LWLoggingTests", dependencies: ["LWLogging"]),
+        .testTarget(name: "LWFileSystemTests", dependencies: ["LWFileSystem"]),
+        .testTarget(name: "LWLoggingTests", dependencies: ["LWLogging", "LWFileSystem"]),
         .testTarget(
             name: "LWAPITests",
             dependencies: ["LWAPI", "LWModels", "LWSecureStorage"]
         ),
-        .testTarget(name: "LWStoreTests", dependencies: ["LWStore", "LWModels"]),
+        .testTarget(name: "LWStoreTests", dependencies: ["LWStore", "LWModels", "LWFileSystem"]),
+        .testTarget(name: "LWFeaturesTests", dependencies: ["LWFeatures", "LWModels", "LWLogging", "LWFileSystem"]),
     ]
 )

@@ -1,25 +1,25 @@
-import LWModels
 import SwiftUI
 
 /// Ride and charging totals for each paired bike.
 struct RidesView: View {
-    let model: AppModel
-    @State private var period = AnalyticsPeriod.month
+    @State private var viewModel: RidesViewModel
+
+    init(model: AppModel) {
+        _viewModel = State(initialValue: RidesViewModel(app: model))
+    }
 
     var body: some View {
         List {
-            ForEach(model.snapshot.pairedBikes) { bike in
-                if let report = model.analytics[bike.id] {
-                    AnalyticsSection(bike: bike, report: report, period: $period)
-                }
+            ForEach(viewModel.sections) { section in
+                AnalyticsSection(viewModel: viewModel, section: section)
             }
         }
         .navigationTitle("Rides")
-        .refreshable { await model.loadAnalytics() }
-        .task { await model.loadAnalytics() }
+        .refreshable { await viewModel.load() }
+        .task { await viewModel.load() }
         .overlay {
-            if model.analytics.isEmpty {
-                if model.isLoadingAnalytics {
+            if viewModel.isEmpty {
+                if viewModel.isLoading {
                     ProgressView()
                 } else {
                     ContentUnavailableView(

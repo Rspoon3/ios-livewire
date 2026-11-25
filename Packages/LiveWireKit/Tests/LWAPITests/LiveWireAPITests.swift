@@ -128,8 +128,8 @@ private func router(
         #expect(status.batteryLevel == 82)
         #expect(status.isCharging == false)
         #expect(status.chargeLimit == 80)
-        #expect(status.rangeMiles == 112.4)
-        #expect(status.dataAge == 720)
+        #expect(status.range == Measurement(value: 112.4, unit: .miles))
+        #expect(status.dataAge == .seconds(720))
         #expect(transport.requests(containing: "bikes/101/charging/status").count == 1)
     }
 
@@ -241,7 +241,7 @@ private func router(
     }
 
     @Test func formEncodingEscapesReservedCharacters() {
-        let data = AuthSession.formEncoded([("a b", "x+y&z=1")])
+        let data = RequestBody.formEncoded([.init("a b", "x+y&z=1")])
         #expect(String(decoding: data, as: UTF8.self) == "a%20b=x%2By%26z%3D1")
     }
 }
@@ -261,10 +261,10 @@ final class Counter: @unchecked Sendable {
         let reading = try decode(ChargingStatusResponse.self, #"{"bikeChargingData":{"batteryPercentage":"82","range":"112.4","maxLimit":"90","timeToMaxLimit":"45","durationElapsed":"12","durationUnit":"MINUTES"}}"#)
         let status = reading.status(bikeID: "1")
         #expect(status.batteryLevel == 82)
-        #expect(status.rangeMiles == 112.4)
+        #expect(status.range == Measurement(value: 112.4, unit: .miles))
         #expect(status.chargeLimit == 90)
-        #expect(status.minutesToLimit == 45)
-        #expect(status.dataAge == 720)
+        #expect(status.timeToLimit == .seconds(2700))
+        #expect(status.dataAge == .seconds(720))
     }
 
     @Test func aZeroChargeLimitMeansNone() throws {
@@ -307,5 +307,60 @@ final class Counter: @unchecked Sendable {
         #expect(try decode(ErrorEnvelope.self, #"{"error":{"code":"3000"}}"#).error?.code == "3000")
         #expect(try decode(ErrorEnvelope.self, #"{"error":{"code":3000}}"#).error?.code == "3000")
         #expect(try decode(ErrorEnvelope.self, "{}").error == nil)
+    }
+}
+
+@Suite struct RequestBuildingTests {
+    private let config = APIConfiguration(gigyaAPIKey: "TEST_KEY")
+
+    @Test func aLiveWireCallCarriesTheBrandTheHeadersAndTheToken() throws {
+        let request = try config.urlRequest(for: ListBikes(deviceUUID: "uuid-1"), token: "T")
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.absoluteString == "https://mobileapi.livewire.com/api/getAllbikes/pairingStatus?deviceUUID=uuid-1&brand=LiveWire")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer T")
+        #expect(request.value(forHTTPHeaderField: "User-Agent") == "Android")
+        #expect(request.value(forHTTPHeaderField: "model") == "Google Pixel 8")
+        #expect(request.httpBody == nil)
+    }
+
+    @Test func theSessionCallIsNotAuthorizedAndSendsJSON() throws {
+        let endpoint = CreateSession(request: SessionRequest(uid: "u", deviceUUID: "d", dataCenter: "us1"))
+        let request = try config.urlRequest(for: endpoint, token: "T")
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(request.url?.path == "/api/session")
+        let data = try #require(request.httpBody)
+        let body = try JSONSerialization.jsonObject(with: data) as? [String: String]
+        #expect(body == ["UID": "u", "deviceUUID": "d", "dataCenter": "us1"])
+    }
+
+    @Test func gigyaGoesToItsOwnHostAsAForm() throws {
+        let endpoint = GigyaLogin(apiKey: "K", email: "a@b.c", password: "p+w&1")
+        let request = try config.urlRequest(for: endpoint, token: nil)
+        #expect(request.url?.absoluteString == "https://accounts.us1.gigya.com/accounts.login")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/x-www-form-urlencoded")
+        #expect(request.value(forHTTPHeaderField: "model") == nil, "Gigya only gets the User-Agent")
+        let body = String(decoding: try #require(request.httpBody), as: UTF8.self)
+        #expect(body.contains("password=p%2Bw%261"))
+        #expect(endpoint.logPolicy.logsBodies == false)
+    }
+
+    @Test func pairingWaitsLongerAndTheCodeIsMaskedInTheLog() throws {
+        let request = try config.urlRequest(for: RequestPairingCode(bikeID: "1", deviceUUID: "d"), token: "T")
+        #expect(request.timeoutInterval == 120)
+        #expect(VerifyPairingCode(bikeID: "1", deviceUUID: "d", code: "123456").logPolicy.redactedRequestKeys == ["code"])
+    }
+
+    @Test func analyticsSendTheDateWithMilliseconds() throws {
+        let date = Date(timeIntervalSince1970: 1_767_323_045.062)
+        let request = try config.urlRequest(for: RideAnalyticsRequest(bikeID: "9", date: date), token: "T")
+        #expect(request.url?.path == "/api/bikes/9/ride/analytics")
+        #expect(request.url?.query?.contains("date=2026-01-02T03:04:05.062Z") == true)
+    }
+
+    @Test func labelsLeaveOutTheBrandAndSecrets() {
+        #expect(ChargingStatusRequest(bikeID: "5").label == "GET bikes/5/charging/status")
+        #expect(ListBikes(deviceUUID: "d").label == "GET getAllbikes/pairingStatus?deviceUUID=d")
+        #expect(GigyaLogin(apiKey: "K", email: "e", password: "p").label == "POST gigya accounts.login")
     }
 }

@@ -1,27 +1,21 @@
-import LWLogging
-import LWModels
 import SwiftUI
 
 /// Pairs this install with a bike: the bike shows a 6-digit code on its display, which is typed here.
 struct PairingView: View {
-    let bike: Bike
-    let model: AppModel
+    @State private var viewModel: PairingViewModel
     @Environment(\.dismiss) private var dismiss
 
-    private enum Step { case instructions, enterCode, finishing, done }
-
-    @State private var step = Step.instructions
-    @State private var code = ""
-    @State private var isWorking = false
-    @State private var message: String?
+    init(viewModel: PairingViewModel) {
+        _viewModel = State(initialValue: viewModel)
+    }
 
     var body: some View {
         Form {
             Section {
-                Text("Pairing lets this app read \(bike.displayName)'s battery over the cellular connection. You only need to do it once.")
+                Text("Pairing lets this app read \(viewModel.bike.displayName)'s battery over the cellular connection. You only need to do it once.")
             }
 
-            switch step {
+            switch viewModel.step {
             case .instructions:
                 Section("Before you start") {
                     Label("Sit at the bike with the ignition on", systemImage: "key")
@@ -29,8 +23,9 @@ struct PairingView: View {
                     Label("The bike needs cellular reception", systemImage: "antenna.radiowaves.left.and.right")
                 }
                 Section {
-                    Button("Show the code on the bike") { request() }.disabled(isWorking)
-                    if isWorking {
+                    Button("Show the code on the bike") { Task { await viewModel.requestCode() } }
+                        .disabled(viewModel.isWorking)
+                    if viewModel.isWorking {
                         HStack {
                             ProgressView()
                             Text("Waiting for the bike. This takes about a minute. Keep the ignition on and stay on this screen.")
@@ -41,11 +36,12 @@ struct PairingView: View {
                 }
             case .enterCode:
                 Section {
-                    TextField("6-digit code", text: $code)
+                    TextField("6-digit code", text: $viewModel.code)
                         .keyboardType(.numberPad)
                         .textContentType(.oneTimeCode)
                         .font(.title2.monospacedDigit())
-                    Button("Pair") { verify() }.disabled(code.count < 4 || isWorking)
+                    Button("Pair") { Task { await viewModel.verify() } }
+                        .disabled(!viewModel.canVerify)
                 } header: {
                     Text("Code from the bike's display")
                 } footer: {
@@ -58,43 +54,11 @@ struct PairingView: View {
                 Section { Button("Done") { dismiss() } }
             }
 
-            if let message {
+            if let message = viewModel.message {
                 Section { Text(message).foregroundStyle(.red) }
             }
         }
         .navigationTitle("Pair bike")
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private func request() {
-        run {
-            try await model.requestPairingCode(bikeID: bike.id)
-            step = .enterCode
-        }
-    }
-
-    private func verify() {
-        run {
-            try await model.verifyPairingCode(bikeID: bike.id, code: code.trimmingCharacters(in: .whitespaces))
-            step = .finishing
-            if try await model.finishPairing(bikeID: bike.id) {
-                step = .done
-            } else {
-                step = .enterCode
-                message = "The bike did not confirm the pairing in time. Try again."
-            }
-        }
-    }
-
-    private func run(_ work: @escaping () async throws -> Void) {
-        isWorking = true
-        message = nil
-        Task {
-            do { try await work() } catch {
-                message = error.localizedDescription
-                if step == .finishing { step = .enterCode }
-            }
-            isWorking = false
-        }
     }
 }

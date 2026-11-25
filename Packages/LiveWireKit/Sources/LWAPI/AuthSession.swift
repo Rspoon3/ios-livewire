@@ -101,31 +101,19 @@ actor AuthSession {
     // MARK: Network
 
     private func gigyaLogin(email: String, password: String) async throws -> String {
-        var request = URLRequest(url: configuration.gigyaURL.appendingPathComponent("accounts.login"))
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue(configuration.identity.userAgent, forHTTPHeaderField: "User-Agent")
-        request.httpBody = Self.formEncoded([
-            ("apiKey", configuration.gigyaAPIKey),
-            ("loginID", email),
-            ("password", password),
-            ("include", "profile,data"),
-            ("format", "json"),
-        ])
+        let login = GigyaLogin(apiKey: configuration.gigyaAPIKey, email: email, password: password)
+        let response = try await wire.send(login, using: configuration).decode(GigyaLoginResponse.self)
 
-        // The response includes profile data and session secrets, so only the outcome is logged.
-        let response = try await wire.perform(request, label: "POST gigya accounts.login", logBodies: false)
-        let login = try response.decode(GigyaLoginResponse.self)
-        let errorCode = login.errorCode ?? 0
+        let errorCode = response.errorCode ?? 0
         if errorCode != 0 {
-            let message = login.errorMessage ?? "error \(errorCode)"
+            let message = response.errorMessage ?? "error \(errorCode)"
             log.warning("Gigya login failed: errorCode=\(errorCode) message=\(message)")
             if Self.credentialErrors.contains(errorCode) {
                 throw LiveWireAPIError.invalidCredentials("Wrong email or password, or the account setup is unfinished (\(errorCode)).")
             }
             throw LiveWireAPIError.gigya(code: errorCode, message: message)
         }
-        guard let uid = login.uid, !uid.isEmpty else {
+        guard let uid = response.uid, !uid.isEmpty else {
             throw LiveWireAPIError.unexpectedResponse("Gigya login returned no UID")
         }
         log.info("Gigya login succeeded (UID received)")
@@ -133,18 +121,9 @@ actor AuthSession {
     }
 
     private func mintToken(uid: String) async throws -> String {
-        let deviceUUID = try deviceUUID()
-        var components = URLComponents(url: configuration.baseURL.appendingPathComponent("session"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "brand", value: configuration.brand)]
+        let request = SessionRequest(uid: uid, deviceUUID: try deviceUUID(), dataCenter: configuration.dataCenter)
+        let response = try await wire.send(CreateSession(request: request), using: configuration)
 
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "POST"
-        for (name, value) in configuration.identity.headers { request.setValue(value, forHTTPHeaderField: name) }
-        request.httpBody = try JSONEncoder().encode(
-            SessionRequest(uid: uid, deviceUUID: deviceUUID, dataCenter: configuration.dataCenter)
-        )
-
-        let response = try await wire.perform(request, label: "POST session?brand=\(configuration.brand)")
         let session = try? response.decode(SessionResponse.self)
         guard let jwt = session?.jwt, !jwt.isEmpty else {
             let envelope = try? response.decode(ErrorEnvelope.self)
@@ -156,20 +135,5 @@ actor AuthSession {
             log.info("Session token stored (termsAccepted: \(accepted))")
         }
         return jwt
-    }
-
-    /// Gigya expects `application/x-www-form-urlencoded`. `+` and `&` in passwords must be escaped,
-    /// which `URLComponents` does not do for query-style bodies.
-    static func formEncoded(_ pairs: [(String, String)]) -> Data {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        let body = pairs
-            .map { name, value in
-                let encodedName = name.addingPercentEncoding(withAllowedCharacters: allowed) ?? name
-                let encodedValue = value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
-                return "\(encodedName)=\(encodedValue)"
-            }
-            .joined(separator: "&")
-        return Data(body.utf8)
     }
 }

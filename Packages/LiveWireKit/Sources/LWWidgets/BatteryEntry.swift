@@ -25,7 +25,7 @@ struct BatteryEntry: TimelineEntry {
         date: .now,
         bikeName: "My bike",
         state: .ok,
-        status: ChargingStatus(bikeID: "0", batteryLevel: 76, isCharging: false, rangeMiles: 98),
+        status: ChargingStatus(bikeID: "0", batteryLevel: 76, isCharging: false, range: Measurement(value: 98, unit: .miles)),
         isStale: false
     )
 

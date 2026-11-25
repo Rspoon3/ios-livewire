@@ -9,12 +9,12 @@ public struct ChargingStatus: Codable, Sendable, Hashable {
     public var isPluggedIn: Bool
     /// Charge limit, percent.
     public var chargeLimit: Int?
-    /// Minutes until the charge limit is reached.
-    public var minutesToLimit: Double?
-    public var rangeMiles: Double?
-    public var odometerMiles: Double?
+    /// Time until the charge limit is reached.
+    public var timeToLimit: Duration?
+    public var range: Measurement<UnitLength>?
+    public var odometer: Measurement<UnitLength>?
     /// How old the bike's own report was when the backend answered.
-    public var dataAge: TimeInterval?
+    public var dataAge: Duration?
     /// SAFE, STOLEN or PENDING.
     public var trackingStatus: String?
     /// When this app fetched the status.
@@ -26,10 +26,10 @@ public struct ChargingStatus: Codable, Sendable, Hashable {
         isCharging: Bool = false,
         isPluggedIn: Bool = false,
         chargeLimit: Int? = nil,
-        minutesToLimit: Double? = nil,
-        rangeMiles: Double? = nil,
-        odometerMiles: Double? = nil,
-        dataAge: TimeInterval? = nil,
+        timeToLimit: Duration? = nil,
+        range: Measurement<UnitLength>? = nil,
+        odometer: Measurement<UnitLength>? = nil,
+        dataAge: Duration? = nil,
         trackingStatus: String? = nil,
         fetchedAt: Date = Date()
     ) {
@@ -38,24 +38,35 @@ public struct ChargingStatus: Codable, Sendable, Hashable {
         self.isCharging = isCharging
         self.isPluggedIn = isPluggedIn
         self.chargeLimit = chargeLimit
-        self.minutesToLimit = minutesToLimit
-        self.rangeMiles = rangeMiles
-        self.odometerMiles = odometerMiles
+        self.timeToLimit = timeToLimit
+        self.range = range
+        self.odometer = odometer
         self.dataAge = dataAge
         self.trackingStatus = trackingStatus
         self.fetchedAt = fetchedAt
     }
 
-    public var rangeKilometers: Double? { rangeMiles.map { $0 * 1.609344 } }
-    public var odometerKilometers: Double? { odometerMiles.map { $0 * 1.609344 } }
-
-    /// Units seen on a real bike: `seconds` and `minute` (singular). Unknown units yield `nil`.
-    public static func age(amount: Double?, unit: String?) -> TimeInterval? {
+    /// How old a report is, from the amount and unit the backend sends. Units seen on a real bike:
+    /// `seconds` and `minute` (singular). Unknown units give `nil`.
+    public static func age(amount: Double?, unit: String?) -> Duration? {
         guard let amount, let unit = unit?.lowercased() else { return nil }
-        if unit.hasPrefix("sec") { return amount }
-        if unit.hasPrefix("min") { return amount * 60 }
-        if unit.hasPrefix("hour") || unit.hasPrefix("hr") { return amount * 3600 }
-        if unit.hasPrefix("day") { return amount * 86_400 }
-        return nil
+        let unitDuration: UnitDuration
+        if unit.hasPrefix("sec") {
+            unitDuration = .seconds
+        } else if unit.hasPrefix("min") {
+            unitDuration = .minutes
+        } else if unit.hasPrefix("hour") || unit.hasPrefix("hr") {
+            unitDuration = .hours
+        } else {
+            return nil
+        }
+        return Duration(Measurement(value: amount, unit: unitDuration))
+    }
+}
+
+extension Duration {
+    /// A duration from a `Measurement`, converted by Foundation instead of by hand.
+    public init(_ measurement: Measurement<UnitDuration>) {
+        self = .seconds(measurement.converted(to: .seconds).value)
     }
 }

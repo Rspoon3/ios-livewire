@@ -2,6 +2,15 @@
   "originHash" : "0c6b76adc44e9d7d7f2c2bcf800c9fc664304b99f178a8d3a97b3f9bbd0d612d",
   "pins" : [
     {
+      "identity" : "asynctimelineprovider",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Rspoon3/AsyncTimelineProvider.git",
+      "state" : {
+        "revision" : "ccd273f1ec55318f91329fe6defdd56079e5589c",
+        "version" : "1.0.0"
+      }
+    },
+    {
       "identity" : "cocoalumberjack",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/CocoaLumberjack/CocoaLumberjack.git",

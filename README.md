@@ -27,7 +27,7 @@ Pull requests that add logs or fixtures from other bikes are welcome (read
 * Pairs this install with your bike, once, at the bike, with a code from the bike's display.
 * Shows battery percentage, charging state, charge limit, range and odometer for **each bike on the account**.
 * Shows ride and charging totals for the week, month, 3 and 6 months, with bar charts.
-* A widget (small, medium and Lock Screen sizes) that refreshes itself. Long-press → *Edit Widget* picks the bike.
+* A widget (small, medium and Lock Screen sizes) that refreshes itself. It shows the app's default bike; with several bikes, choose it on the bike's screen.
 * Writes persistent, redacted logs, and shares them as one JSON file with one tap, so the API can be mapped
   from real responses. See [docs/logging.md](docs/logging.md).
 
@@ -45,14 +45,14 @@ The Xcode targets are thin shells. Everything lives in one Swift package, `Packa
 
 | Target | Role |
 |---|---|
-| `LWModels` | `Bike`, `ChargingStatus`, and the ride and charging analytics, as plain `Sendable` structs. No dependencies. |
+| `LWModels` | `Bike`, `ChargingStatus` and the ride and charging analytics as plain `Sendable` structs, using `Measurement` and `Duration` for units. No dependencies. |
 | `LWLogging` | CocoaLumberjack file logging, JSON Lines files on disk, redaction, one-file JSON export. |
 | `LWSecureStorage` | Keychain access through [Valet](https://github.com/square/Valet). |
-| `LWAPI` | Gigya sign-in, session token, endpoints, error envelope, and the `Decodable` wire types. |
+| `LWAPI` | An `Endpoint` protocol with one small struct per call, the `Decodable` wire types, Gigya sign-in and the session token. |
 | `LWStore` | Snapshot file shared with the widget through an App Group. |
 | `LWServices` | Facade that the app and the widget both use. |
-| `LWFeatures` | SwiftUI screens and the observable `AppModel`. |
-| `LWWidgets` | WidgetKit widget, intent and timeline provider. |
+| `LWFeatures` | SwiftUI screens, one view model per screen, and the shared `AppModel`. |
+| `LWWidgets` | The WidgetKit widget and its timeline provider. |
 
 `ios-livewire/IOSLivewireApp.swift` and `LiveWireWidget/LiveWireWidgetBundle.swift` are the only app code.
 
@@ -98,5 +98,6 @@ publish it. Nothing is sent anywhere except to LiveWire's two hosts. Details: [d
 * [py-livewire](https://github.com/hass-livewire/py-livewire) (Apache-2.0) documents the endpoints,
   headers and error codes this project uses. This project re-implements the calls in Swift and does not
   copy its source.
-* [CocoaLumberjack](https://github.com/CocoaLumberjack/CocoaLumberjack) and
-  [Valet](https://github.com/square/Valet).
+* [CocoaLumberjack](https://github.com/CocoaLumberjack/CocoaLumberjack),
+  [Valet](https://github.com/square/Valet) and
+  [AsyncTimelineProvider](https://github.com/Rspoon3/AsyncTimelineProvider) (async/await for the widget's timeline provider).

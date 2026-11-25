@@ -1,5 +1,6 @@
 import Foundation
 import LWAPI
+import LWFileSystem
 import LWLogging
 import LWStore
 
@@ -9,12 +10,15 @@ import LWStore
 /// Secrets are never build settings; they live in the Keychain.
 public struct RuntimeConfiguration: Sendable {
     public var appGroupIdentifier: String?
+    /// The disk. Debug-build tests pass an `InMemoryFileSystem`.
+    public var fileSystem: any FileSystem
 
-    public init(appGroupIdentifier: String?) {
+    public init(appGroupIdentifier: String?, fileSystem: any FileSystem = DiskFileSystem()) {
         self.appGroupIdentifier = appGroupIdentifier
+        self.fileSystem = fileSystem
     }
 
-    public init(bundle: Bundle = .main) {
+    public init(bundle: Bundle = .main, fileSystem: any FileSystem = DiskFileSystem()) {
         func value(_ key: String) -> String? {
             guard let text = bundle.object(forInfoDictionaryKey: key) as? String,
                   !text.isEmpty,
@@ -22,25 +26,31 @@ public struct RuntimeConfiguration: Sendable {
             else { return nil }
             return text
         }
-        self.init(appGroupIdentifier: value("LWAppGroup"))
+        self.init(appGroupIdentifier: value("LWAppGroup"), fileSystem: fileSystem)
     }
 
-    public var sharedContainer: URL? { AppGroup.containerURL(identifier: appGroupIdentifier) }
+    public var sharedContainer: URL? {
+        appGroupIdentifier.flatMap { fileSystem.sharedContainer(appGroup: $0) }
+    }
 
     /// Log locations for this process.
     public func logLocations() -> LogLocations {
-        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        return LogLocations(documents: documents, sharedContainer: sharedContainer)
+        LogLocations(documents: fileSystem.documentsDirectory, sharedContainer: sharedContainer)
+    }
+
+    public func logExport() -> LogExport {
+        LogExport(locations: logLocations(), fileSystem: fileSystem)
     }
 
     /// Where the snapshot lives: the App Group container if available, else Application Support
     /// (the widget then only sees stale data, and a warning is logged).
     public func snapshotDirectory() -> URL {
-        if let sharedContainer { return sharedContainer.appendingPathComponent("Snapshot", isDirectory: true) }
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        return support.appendingPathComponent("Snapshot", isDirectory: true)
+        (sharedContainer ?? fileSystem.applicationSupportDirectory)
+            .appendingPathComponent("Snapshot", isDirectory: true)
+    }
+
+    public func snapshotStore() -> SnapshotStore {
+        SnapshotStore(directory: snapshotDirectory(), fileSystem: fileSystem)
     }
 }
 
@@ -50,7 +60,7 @@ public enum LiveWireRuntime {
     public static func bootstrap(process: LogProcess, bundle: Bundle = .main) -> RuntimeConfiguration {
         let configuration = RuntimeConfiguration(bundle: bundle)
         let locations = configuration.logLocations()
-        LWLogging.bootstrap(process: process, directory: locations.directory(for: process))
+        LWLogging.bootstrap(process: process, directory: locations.directory(for: process), fileSystem: configuration.fileSystem)
 
         let log = LWLogger("runtime")
         log.info("Process \(process.rawValue) starting. App Group: \(configuration.appGroupIdentifier ?? "none"), container available: \(configuration.sharedContainer != nil)")

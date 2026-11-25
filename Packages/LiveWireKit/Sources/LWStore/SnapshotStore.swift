@@ -1,4 +1,5 @@
 import Foundation
+import LWFileSystem
 import LWLogging
 import LWModels
 
@@ -34,27 +35,23 @@ public struct Snapshot: Codable, Sendable, Equatable {
     }
 }
 
-public enum AppGroup {
-    /// The App Group's shared container, or `nil` when the entitlement is missing.
-    public static func containerURL(identifier: String?) -> URL? {
-        guard let identifier, !identifier.isEmpty else { return nil }
-        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: identifier)
-    }
-}
-
 public actor SnapshotStore {
     private let fileURL: URL
+    private let fileSystem: any FileSystem
     private let log = LWLogger("store")
 
-    /// - Parameter directory: where `snapshot.json` lives. In the app this is inside the App Group
-    ///   container so the widget reads the same file.
-    public init(directory: URL) {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    /// - Parameters:
+    ///   - directory: where `snapshot.json` lives. In the app this is inside the App Group container
+    ///     so the widget reads the same file.
+    ///   - fileSystem: the disk, or an in-memory stand-in in tests.
+    public init(directory: URL, fileSystem: any FileSystem = DiskFileSystem()) {
+        self.fileSystem = fileSystem
+        try? fileSystem.createDirectory(at: directory)
         fileURL = directory.appendingPathComponent("snapshot.json")
     }
 
     public func load() -> Snapshot {
-        guard let data = try? Data(contentsOf: fileURL) else { return Snapshot() }
+        guard let data = try? fileSystem.read(fileURL) else { return Snapshot() }
         do {
             return try Self.decoder.decode(Snapshot.self, from: data)
         } catch {
@@ -72,7 +69,7 @@ public actor SnapshotStore {
         snapshot.updatedAt = Date()
         do {
             let data = try Self.encoder.encode(snapshot)
-            try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            try fileSystem.write(data, to: fileURL, protection: .untilFirstUserAuthentication)
         } catch {
             log.error("Could not write the snapshot: \(error)")
         }
@@ -80,7 +77,7 @@ public actor SnapshotStore {
     }
 
     public func clear() {
-        try? FileManager.default.removeItem(at: fileURL)
+        try? fileSystem.remove(fileURL)
     }
 
     private static let encoder: JSONEncoder = {

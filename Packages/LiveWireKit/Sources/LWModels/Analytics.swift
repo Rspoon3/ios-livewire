@@ -32,11 +32,10 @@ public enum AnalyticsGranularity: String, Sendable, Hashable, Codable {
 }
 
 enum AnalyticsDate {
-    /// Bucket starts are plain dates (`2026-11-01`). They become midnight in the current calendar.
+    /// Bucket starts are plain dates (`2026-11-01`). They become midnight in the current time zone,
+    /// so a bar lands on the day it belongs to wherever the phone is.
     static func day(_ text: String) -> Date? {
-        let parts = text.prefix(10).split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3 else { return nil }
-        return Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+        try? Date(text, strategy: Date.ISO8601FormatStyle(timeZone: .current).year().month().day())
     }
 }
 
@@ -54,6 +53,7 @@ public struct RideBucket: Sendable, Hashable, Identifiable, Decodable {
     public let efficiencyKWhPerKm: Double?
 
     public var start: Date? { AnalyticsDate.day(startText) }
+    public var distance: Measurement<UnitLength> { Measurement(value: distanceMiles, unit: .miles) }
 
     private enum CodingKeys: String, CodingKey {
         case startText = "bucketStart"
@@ -80,9 +80,16 @@ public struct RideTotals: Sendable, Hashable, Decodable {
     public let durationSeconds: Double
     public let efficiencyKWhPerKm: Double?
 
-    /// Watt-hours per mile, for display in the US.
-    public var efficiencyWhPerMile: Double? {
-        efficiencyKWhPerKm.map { $0 * 1000 * 1.609344 }
+    public var distance: Measurement<UnitLength> { Measurement(value: distanceMiles, unit: .miles) }
+    public var duration: Duration { .seconds(durationSeconds) }
+
+    /// Energy used per 100 miles, the usual way to quote an electric vehicle's efficiency in the US.
+    /// The backend reports kWh per kilometre.
+    public var energyPer100Miles: Measurement<UnitEnergy>? {
+        efficiencyKWhPerKm.map { perKm in
+            let hundredMiles = Measurement(value: 100, unit: UnitLength.miles).converted(to: .kilometers)
+            return Measurement(value: perKm * hundredMiles.value, unit: UnitEnergy.kilowattHours)
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -145,6 +152,7 @@ public struct ChargingBucket: Sendable, Hashable, Identifiable, Decodable {
     public let batteryAddedPercent: Double
 
     public var start: Date? { AnalyticsDate.day(startText) }
+    public var energyAdded: Measurement<UnitEnergy> { Measurement(value: energyAddedKWh, unit: .kilowattHours) }
 
     private enum CodingKeys: String, CodingKey {
         case startText = "bucketStart"
@@ -171,6 +179,9 @@ public struct ChargingTotals: Sendable, Hashable, Decodable {
     public let batteryAddedPercent: Double
     /// Seconds (1958 for a single session, about 33 minutes).
     public let chargeTimeSeconds: Double
+
+    public var chargeTime: Duration { .seconds(chargeTimeSeconds) }
+    public var energyAdded: Measurement<UnitEnergy> { Measurement(value: energyAddedKWh, unit: .kilowattHours) }
 
     private enum CodingKeys: String, CodingKey {
         case sessionCount

@@ -1,6 +1,15 @@
 {
-  "originHash" : "0b5b6b9473fcfc6916b318c821e53c3214ee50c50bb9f0ec121e0c597ac30e4f",
+  "originHash" : "edd743c192ec1c3ed3e957aed5a8e356309be6872ba8f879346e895532dc6e1d",
   "pins" : [
+    {
+      "identity" : "asynctimelineprovider",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Rspoon3/AsyncTimelineProvider.git",
+      "state" : {
+        "revision" : "ccd273f1ec55318f91329fe6defdd56079e5589c",
+        "version" : "1.0.0"
+      }
+    },
     {
       "identity" : "cocoalumberjack",
       "kind" : "remoteSourceControl",

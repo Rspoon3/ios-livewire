@@ -93,7 +93,8 @@ public struct KeychainSecretStore: SecretStore {
     }
 }
 
-/// For tests and previews. Never use it for real credentials.
+#if DEBUG
+/// For tests and previews. Debug builds only, so it never ships. Never use it for real credentials.
 public final class InMemorySecretStore: SecretStore, @unchecked Sendable {
     private let lock = NSLock()
     private var values: [SecretKey: String]
@@ -114,3 +115,5 @@ public final class InMemorySecretStore: SecretStore, @unchecked Sendable {
         lock.withLock { _ = values.removeValue(forKey: key) }
     }
 }
+
+#endif

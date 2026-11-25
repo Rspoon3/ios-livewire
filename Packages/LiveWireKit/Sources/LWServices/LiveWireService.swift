@@ -25,7 +25,7 @@ public final class LiveWireService: Sendable {
     public static func live(configuration: RuntimeConfiguration) -> LiveWireService {
         let secrets = KeychainSecretStore(appGroupIdentifier: configuration.appGroupIdentifier)
         let api = LiveWireAPI(configuration: APIConfiguration(), secrets: secrets)
-        let store = SnapshotStore(directory: configuration.snapshotDirectory())
+        let store = configuration.snapshotStore()
         return LiveWireService(api: api, store: store, configuration: configuration)
     }
 
@@ -70,7 +70,7 @@ public final class LiveWireService: Sendable {
     @discardableResult
     public func refreshStatus(bikeID: String) async throws -> ChargingStatus {
         let status = try await api.chargingStatus(bikeID: bikeID)
-        log.info("Bike \(bikeID): battery \(status.batteryLevel.map { String($0) } ?? "?")% charging=\(status.isCharging) plugged=\(status.isPluggedIn) range=\(status.rangeMiles.map { String($0) } ?? "?") mi")
+        log.info("Bike \(bikeID): battery \(status.batteryLevel.map { String($0) } ?? "?")% charging=\(status.isCharging) plugged=\(status.isPluggedIn) range=\(status.range?.formatted() ?? "?")")
         await store.update { $0.statuses[bikeID] = status }
         return status
     }

@@ -1,5 +1,6 @@
 import CocoaLumberjackSwift
 import Foundation
+import LWFileSystem
 
 /// Which process is writing. The widget extension runs in its own process, so it logs to its own
 /// directory; the app mirrors those files into its Documents folder (see `LogExport`).
@@ -18,12 +19,12 @@ public enum LWLogging {
 
     /// Call once, as early as possible, in every process (app and widget extension).
     /// Calling it again is a no-op.
-    public static func bootstrap(process: LogProcess, directory: URL) {
+    public static func bootstrap(process: LogProcess, directory: URL, fileSystem: any FileSystem = DiskFileSystem()) {
         lock.lock()
         defer { lock.unlock() }
         guard fileLogger == nil else { return }
 
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? fileSystem.createDirectory(at: directory)
 
         // Readable once the phone has been unlocked after boot, so the widget can log while it is locked.
         let manager = DDLogFileManagerDefault(
@@ -31,11 +32,11 @@ public enum LWLogging {
             defaultFileProtectionLevel: .completeUntilFirstUserAuthentication
         )
         manager.maximumNumberOfLogFiles = 14
-        manager.logFilesDiskQuota = 50 * 1024 * 1024
+        manager.logFilesDiskQuota = UInt64(Measurement(value: 50, unit: UnitInformationStorage.mebibytes).converted(to: .bytes).value)
 
         let logger = DDFileLogger(logFileManager: manager)
-        logger.rollingFrequency = 60 * 60 * 24
-        logger.maximumFileSize = 5 * 1024 * 1024
+        logger.rollingFrequency = Measurement(value: 24, unit: UnitDuration.hours).converted(to: .seconds).value
+        logger.maximumFileSize = UInt64(Measurement(value: 5, unit: UnitInformationStorage.mebibytes).converted(to: .bytes).value)
         logger.logFormatter = JSONLineFormatter(process: process)
         DDLog.add(logger, with: .all)
         fileLogger = logger

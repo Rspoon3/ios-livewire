@@ -3,6 +3,7 @@ import LWAPI
 import LWLogging
 import LWModels
 import LWServices
+import AsyncTimelineProvider
 import WidgetKit
 
 /// Builds the widget's timeline.
@@ -11,22 +12,23 @@ import WidgetKit
 /// the timeline asks for a reload every 15 minutes while charging and every 30 otherwise. The app
 /// also reloads timelines whenever it refreshes. Truly live updates would need push-triggered widget
 /// reloads, which need a server and are out of scope for this MVP.
-struct BatteryProvider: AppIntentTimelineProvider {
+struct BatteryProvider: AsyncTimelineProvider {
     func placeholder(in context: Context) -> BatteryEntry { .placeholder }
 
-    func snapshot(for configuration: BatteryIntent, in context: Context) async -> BatteryEntry {
+    func snapshot(in context: Context) async -> BatteryEntry {
         if context.isPreview { return .placeholder }
-        return await entry(for: configuration)
+        return await entry()
     }
 
-    func timeline(for configuration: BatteryIntent, in context: Context) async -> Timeline<BatteryEntry> {
-        let entry = await entry(for: configuration)
+    func timeline(in context: Context) async -> Timeline<BatteryEntry> {
+        let entry = await entry()
         LWLogging.flush()  // the extension can be suspended as soon as this returns
         let minutes = entry.status?.isCharging == true ? 15 : 30
-        return Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(Double(minutes) * 60)))
+        return Timeline(entries: [entry], policy: .after(Calendar.current.date(byAdding: .minute, value: minutes, to: .now) ?? .now))
     }
 
-    private func entry(for intent: BatteryIntent) async -> BatteryEntry {
+    /// The widget shows the app's default bike: the one chosen in the app, else the primary paired bike.
+    private func entry() async -> BatteryEntry {
         let log = LWLogger("widget")
         let configuration = RuntimeConfiguration(bundle: .main)
 
@@ -42,7 +44,7 @@ struct BatteryProvider: AppIntentTimelineProvider {
             snapshot = await service.cachedSnapshot()
         }
 
-        guard let bikeID = intent.bike?.id ?? snapshot.effectiveBikeID,
+        guard let bikeID = snapshot.effectiveBikeID,
               let bike = snapshot.bikes.first(where: { $0.id == bikeID })
         else {
             log.info("Widget: no bike to show")

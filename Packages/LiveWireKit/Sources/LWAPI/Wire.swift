@@ -15,6 +15,26 @@ struct Wire: Sendable {
         /// What the request was, for error messages, e.g. `GET bikes/123/charging/status`.
         let label: String
 
+        /// Errors mostly arrive with HTTP 200 as `{"error": {"code": …, "description": …}}`. Throws unless
+        /// the body has no error, or its code is in `okCodes`, and for any HTTP error status.
+        func validate(okCodes: Set<String>) throws {
+            if let error = (try? decode(ErrorEnvelope.self))?.error, let code = error.code, !okCodes.contains(code) {
+                let message = error.description ?? error.message ?? "Unknown error"
+                if code == "3000" {
+                    throw LiveWireAPIError.notPaired(
+                        "\(message): this device is not paired with the bike, or the bike is not reachable."
+                    )
+                }
+                throw LiveWireAPIError.api(code: code, message: message, status: status)
+            }
+            if status >= 400 {
+                let message = (try? decode(HTTPErrorBody.self))?.text
+                    ?? (try? decode(ErrorEnvelope.self))?.error?.description
+                    ?? "HTTP \(status)"
+                throw LiveWireAPIError.http(status: status, message: message)
+            }
+        }
+
         /// Decodes the body, or explains which part of it did not match.
         func decode<T: Decodable>(_ type: T.Type = T.self) throws -> T {
             do {
@@ -69,7 +89,7 @@ struct Wire: Sendable {
 
     private static func milliseconds(since start: ContinuousClock.Instant, clock: ContinuousClock) -> Int {
         let duration = start.duration(to: clock.now)
-        return Int(duration.components.seconds * 1000 + duration.components.attoseconds / 1_000_000_000_000_000)
+        return Int((duration / .milliseconds(1)).rounded())
     }
 }
 

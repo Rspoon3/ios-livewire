@@ -4,94 +4,50 @@ import SwiftUI
 
 /// Ride and charging totals for one bike, with a period picker and a bar chart per topic.
 struct AnalyticsSection: View {
-    let bike: Bike
-    let report: AnalyticsReport
-    @Binding var period: AnalyticsPeriod
+    @Bindable var viewModel: RidesViewModel
+    let section: RidesViewModel.BikeSection
 
     var body: some View {
         Section {
-            Picker("Period", selection: $period) {
+            Picker("Period", selection: $viewModel.period) {
                 ForEach(AnalyticsPeriod.allCases, id: \.self) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
         } header: {
-            Text(bike.displayName)
+            Text(section.bike.displayName)
         }
 
-        if let error = report.ridesError { Section { Text(error).foregroundStyle(.red) } }
-        if let rides = report.rides?.period(period) { RideSection(period: rides) }
-
-        if let error = report.chargingError { Section { Text(error).foregroundStyle(.red) } }
-        if let charging = report.charging?.period(period) { ChargingSection(period: charging) }
-    }
-}
-
-private struct RideSection: View {
-    let period: RideAnalyticsPeriod
-
-    var body: some View {
-        Section("Rides") {
-            LabeledContent("Rides", value: "\(period.totals.rideCount)")
-            LabeledContent("Distance", value: miles(period.totals.distanceMiles))
-            LabeledContent("Riding time", value: duration(period.totals.durationSeconds))
-            if let efficiency = period.totals.efficiencyWhPerMile {
-                LabeledContent("Efficiency", value: "\(Int(efficiency.rounded())) Wh/mi")
+        if let error = section.report.ridesError { Section { Text(error).foregroundStyle(.red) } }
+        let rideRows = viewModel.rideRows(section.report)
+        if !rideRows.isEmpty {
+            Section("Rides") {
+                ForEach(rideRows) { LabeledContent($0.title, value: $0.value) }
+                BucketChart(points: viewModel.distanceChart(section.report), unit: "mi", component: viewModel.calendarUnit(section.report))
             }
-            LabeledContent("Battery used", value: "\(Int(period.totals.batteryUsedPercent.rounded()))%")
-            BucketChart(
-                points: period.buckets.compactMap { bucket in bucket.start.map { ($0, bucket.distanceMiles) } },
-                granularity: period.bucketSize,
-                unit: "mi"
-            )
         }
-    }
-}
 
-private struct ChargingSection: View {
-    let period: ChargingAnalyticsPeriod
-
-    var body: some View {
-        Section("Charging") {
-            LabeledContent("Sessions", value: "\(period.totals.sessionCount)")
-            LabeledContent("Energy added", value: "\(Int(period.totals.energyAddedKWh.rounded())) kWh")
-            LabeledContent("Time charging", value: duration(period.totals.chargeTimeSeconds))
-            BucketChart(
-                points: period.buckets.compactMap { bucket in bucket.start.map { ($0, bucket.energyAddedKWh) } },
-                granularity: period.bucketSize,
-                unit: "kWh"
-            )
+        if let error = section.report.chargingError { Section { Text(error).foregroundStyle(.red) } }
+        let chargingRows = viewModel.chargingRows(section.report)
+        if !chargingRows.isEmpty {
+            Section("Charging") {
+                ForEach(chargingRows) { LabeledContent($0.title, value: $0.value) }
+                BucketChart(points: viewModel.energyChart(section.report), unit: "kWh", component: viewModel.calendarUnit(section.report))
+            }
         }
     }
 }
 
 private struct BucketChart: View {
-    let points: [(Date, Double)]
-    let granularity: AnalyticsGranularity?
+    let points: [RidesViewModel.ChartPoint]
     let unit: String
+    let component: Calendar.Component
 
     var body: some View {
-        Chart(points, id: \.0) { point in
-            BarMark(x: .value("Date", point.0, unit: calendarUnit), y: .value(unit, point.1))
+        Chart(points) { point in
+            BarMark(x: .value("Date", point.date, unit: component), y: .value(unit, point.value))
         }
         .chartYAxisLabel(unit)
         .frame(height: 140)
         .padding(.vertical, 4)
     }
-
-    private var calendarUnit: Calendar.Component {
-        switch granularity {
-        case .day, nil: .day
-        case .week: .weekOfYear
-        case .month: .month
-        }
-    }
-}
-
-private func miles(_ value: Double) -> String {
-    Measurement(value: value, unit: UnitLength.miles)
-        .formatted(.measurement(width: .abbreviated, usage: .asProvided, numberFormatStyle: .number.precision(.fractionLength(0))))
-}
-
-private func duration(_ seconds: Double) -> String {
-    Duration.seconds(seconds).formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated, maximumUnitCount: 2))
 }

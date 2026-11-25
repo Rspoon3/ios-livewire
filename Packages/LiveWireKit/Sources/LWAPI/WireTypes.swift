@@ -198,9 +198,9 @@ struct ChargingStatusResponse: Decodable, Sendable {
             isCharging: reading?.chargingStatus ?? false,
             isPluggedIn: reading?.pluggedIn ?? false,
             chargeLimit: reading?.maxLimit.flatMap { $0 == 0 ? nil : $0 },
-            minutesToLimit: reading?.timeToMaxLimit,
-            rangeMiles: reading?.range,
-            odometerMiles: reading?.odometer,
+            timeToLimit: reading?.timeToMaxLimit.map { Duration(Measurement(value: $0, unit: UnitDuration.minutes)) },
+            range: reading?.range.map { Measurement(value: $0, unit: UnitLength.miles) },
+            odometer: reading?.odometer.map { Measurement(value: $0, unit: UnitLength.miles) },
             dataAge: ChargingStatus.age(amount: reading?.durationElapsed, unit: reading?.durationUnit),
             trackingStatus: trackingStatus,
             fetchedAt: fetchedAt

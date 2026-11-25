@@ -46,40 +46,23 @@ public final class LiveWireAPI: Sendable {
 
     // MARK: Bikes and pairing
 
-    /// `GET getAllbikes/pairingStatus`: the account's bikes, each with whether this device is paired.
+    /// The account's bikes, each with whether this device is paired.
     public func bikes() async throws -> [Bike] {
-        let deviceUUID = try await auth.deviceUUID()
-        let response = try await call(
-            "GET", "getAllbikes/pairingStatus",
-            query: [("deviceUUID", deviceUUID)]
-        )
-        return try response.decode(BikesResponse.self).bikes.map(\.bike)
+        let uuid = try await auth.deviceUUID()
+        return try await send(ListBikes(deviceUUID: uuid)).bikes.map(\.bike)
     }
 
-    /// `GET bikes/pairing/status/{id}`
     public func isPaired(bikeID: String) async throws -> Bool {
-        let deviceUUID = try await auth.deviceUUID()
-        let response = try await call(
-            "GET", "bikes/pairing/status/\(bikeID)",
-            query: [("deviceUUID", deviceUUID)]
-        )
-        return try response.decode(PairingStatusResponse.self).pairingStatus
+        let uuid = try await auth.deviceUUID()
+        return try await send(PairingStatus(bikeID: bikeID, deviceUUID: uuid)).pairingStatus
     }
 
-    static let pairingRequestTimeout: TimeInterval = 120
-
-    /// `POST bikes/{id}/pair`: makes the bike show a 6-digit code on its display.
+    /// Makes the bike show a 6-digit code on its display.
     ///
     /// The bike must be on, not in propulsion mode, not charging, and have cellular reception.
     public func requestPairingCode(bikeID: String) async throws {
-        let deviceUUID = try await auth.deviceUUID()
-        let response = try await call(
-            "POST", "bikes/\(bikeID)/pair",
-            query: [("deviceUUID", deviceUUID)],
-            // The backend holds this request for about a minute while it waits for the bike.
-            timeout: Self.pairingRequestTimeout
-        )
-        let answer = try response.decode(PairingCommandResponse.self)
+        let uuid = try await auth.deviceUUID()
+        let answer = try await send(RequestPairingCode(bikeID: bikeID, deviceUUID: uuid))
         if let status = answer.status, status != 200 {
             throw LiveWireAPIError.pairing(Self.pairingFailureMessage(answer, status: status))
         }
@@ -109,136 +92,64 @@ public final class LiveWireAPI: Sendable {
         return "\(advice) (\(facts))"
     }
 
-    /// `POST bikes/{id}/verify/code` with the code shown on the bike's display.
+    /// Sends back the code the bike shows on its display.
     public func verifyPairingCode(bikeID: String, code: String) async throws {
-        let deviceUUID = try await auth.deviceUUID()
-        let response = try await call(
-            "POST", "bikes/\(bikeID)/verify/code",
-            query: [("deviceUUID", deviceUUID)],
-            body: VerifyCodeRequest(code: code),
-            redactRequestKeys: ["code"],
-            checkEnvelope: false
-        )
+        let uuid = try await auth.deviceUUID()
+        let response = try await perform(VerifyPairingCode(bikeID: bikeID, deviceUUID: uuid, code: code))
         let answer = try? response.decode(PairingCommandResponse.self)
         let envelopeCode = (try? response.decode(ErrorEnvelope.self))?.error?.code.flatMap { Int($0) }
         switch answer?.code ?? envelopeCode {
         case 4003: throw LiveWireAPIError.pairing("Too many wrong codes. Request a new one.")
         case 4004: throw LiveWireAPIError.pairing("That code is wrong.")
-        default: try Self.validate(response, okCodes: ["0"])
+        default: try response.validate(okCodes: ["0"])
         }
         if let answer, let status = answer.status, status != 200 {
             throw LiveWireAPIError.pairing(Self.pairingFailureMessage(answer, status: status))
         }
     }
 
-    // MARK: Charging
+    // MARK: Battery
 
-    /// `GET bikes/{id}/charging/status`: battery, charging, range, odometer.
+    /// Battery, charging, range and odometer.
     ///
     /// Throws `LiveWireAPIError.notPaired` (code 3000) when this device UUID is not paired with the
-    /// bike or the bike cannot be reached. Code -300 is a partial answer that still carries data.
+    /// bike or the bike cannot be reached.
     public func chargingStatus(bikeID: String) async throws -> ChargingStatus {
-        let response = try await call(
-            "GET", "bikes/\(bikeID)/charging/status",
-            okCodes: ["0", "-300"]
-        )
-        return try response.decode(ChargingStatusResponse.self).status(bikeID: bikeID)
+        try await send(ChargingStatusRequest(bikeID: bikeID)).status(bikeID: bikeID)
     }
 
     // MARK: Analytics
 
-    /// `GET bikes/{id}/ride/analytics`: rides, distance and efficiency for the week, month, 3 and 6 months.
+    /// Rides, distance and efficiency for the week, month, 3 and 6 months.
     public func rideAnalytics(bikeID: String) async throws -> RideAnalytics {
-        let response = try await call(
-            "GET", "bikes/\(bikeID)/ride/analytics",
-            query: [("date", Self.now())]
-        )
-        return try response.decode(RideAnalytics.self)
+        try await send(RideAnalyticsRequest(bikeID: bikeID, date: Date()))
     }
 
-    /// `GET bikes/{id}/charging/analytics`: charging sessions and energy for the same periods.
+    /// Charging sessions and energy for the same periods.
     public func chargingAnalytics(bikeID: String) async throws -> ChargingAnalytics {
-        let response = try await call(
-            "GET", "bikes/\(bikeID)/charging/analytics",
-            query: [("date", Self.now())]
-        )
-        return try response.decode(ChargingAnalytics.self)
+        try await send(ChargingAnalyticsRequest(bikeID: bikeID, date: Date()))
     }
 
-    // MARK: Plumbing
+    // MARK: Sending
 
-    /// Sends an authenticated request, signs in again once on a 401, and checks the error envelope.
-    private func call(
-        _ method: String,
-        _ path: String,
-        query: [(String, String)] = [],
-        body: (any Encodable & Sendable)? = nil,
-        okCodes: Set<String> = ["0"],
-        redactRequestKeys: Set<String> = [],
-        checkEnvelope: Bool = true,
-        timeout: TimeInterval? = nil
-    ) async throws -> Wire.Response {
+    /// Sends an endpoint and decodes its response.
+    private func send<E: Endpoint>(_ endpoint: E) async throws -> E.Response {
+        try await perform(endpoint).decode(E.Response.self)
+    }
+
+    /// Sends an authenticated call, renews the session token once on a 401, and checks the error
+    /// envelope unless the endpoint opts out.
+    private func perform<E: Endpoint>(_ endpoint: E) async throws -> Wire.Response {
         var token = try await auth.token()
-        var response = try await send(method, path, query: query, body: body, token: token, redactRequestKeys: redactRequestKeys, timeout: timeout)
+        var response = try await wire.send(endpoint, using: configuration, token: token)
 
         if response.status == 401 {
-            log.info("401 from \(path); renewing the session token")
+            log.info("401 from \(endpoint.path); renewing the session token")
             token = try await auth.renew(rejected: token)
-            response = try await send(method, path, query: query, body: body, token: token, redactRequestKeys: redactRequestKeys, timeout: timeout)
+            response = try await wire.send(endpoint, using: configuration, token: token)
         }
 
-        if checkEnvelope { try Self.validate(response, okCodes: okCodes) }
+        if let okCodes = endpoint.okCodes { try response.validate(okCodes: okCodes) }
         return response
-    }
-
-    private func send(
-        _ method: String,
-        _ path: String,
-        query: [(String, String)],
-        body: (any Encodable & Sendable)?,
-        token: String,
-        redactRequestKeys: Set<String>,
-        timeout: TimeInterval?
-    ) async throws -> Wire.Response {
-        var components = URLComponents(url: configuration.baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
-        components.queryItems = (query + [("brand", configuration.brand)]).map { URLQueryItem(name: $0.0, value: $0.1) }
-
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = method
-        if let timeout { request.timeoutInterval = timeout }
-        for (name, value) in configuration.identity.headers { request.setValue(value, forHTTPHeaderField: name) }
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        if let body { request.httpBody = try JSONEncoder().encode(body) }
-
-        let queryText = (query.isEmpty ? "" : "?" + query.map { "\($0.0)=\($0.1)" }.joined(separator: "&"))
-        return try await wire.perform(
-            request,
-            label: "\(method) \(path)\(queryText)",
-            redactRequestKeys: redactRequestKeys
-        )
-    }
-
-    /// Errors mostly arrive with HTTP 200 as `{"error": {"code": …, "description": …}}`.
-    static func validate(_ response: Wire.Response, okCodes: Set<String>) throws {
-        if let error = (try? response.decode(ErrorEnvelope.self))?.error, let code = error.code, !okCodes.contains(code) {
-            let message = error.description ?? error.message ?? "Unknown error"
-            if code == "3000" {
-                throw LiveWireAPIError.notPaired(
-                    "\(message): this device is not paired with the bike, or the bike is not reachable."
-                )
-            }
-            throw LiveWireAPIError.api(code: code, message: message, status: response.status)
-        }
-        if response.status >= 400 {
-            let body = try? response.decode(HTTPErrorBody.self)
-            let message = body?.text
-                ?? (try? response.decode(ErrorEnvelope.self))?.error?.description
-                ?? "HTTP \(response.status)"
-            throw LiveWireAPIError.http(status: response.status, message: message)
-        }
-    }
-
-    static func now() -> String {
-        Date().formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
     }
 }

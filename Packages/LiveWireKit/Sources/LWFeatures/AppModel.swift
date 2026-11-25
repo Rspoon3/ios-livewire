@@ -59,24 +59,21 @@ public final class AppModel {
 
     /// Call when the app returns to the foreground.
     public func didBecomeActive() async {
-        LogExport.syncWidgetLogs(configuration.logLocations())
+        logExport.syncWidgetLogs()
         if phase == .ready { await refresh() }
     }
 
     // MARK: Session
 
-    public func signIn(email: String, password: String) async -> Bool {
-        errorMessage = nil
+    public func signIn(email: String, password: String) async throws {
         do {
             try await service.signIn(email: email, password: password)
-            phase = .ready
-            await refresh()
-            return true
         } catch {
             log.warning("Sign-in failed: \(error)")
-            errorMessage = error.localizedDescription
-            return false
+            throw error
         }
+        phase = .ready
+        await refresh()
     }
 
     public func signOut() async {
@@ -199,17 +196,14 @@ public final class AppModel {
 
     // MARK: Logs
 
-    var logLocations: LogLocations { configuration.logLocations() }
+    var logExport: LogExport { configuration.logExport() }
 
     public func clearLogs() {
-        LogExport.clear(configuration.logLocations())
+        logExport.clear()
         log.info("Logs cleared by the user")
     }
 
-    public var logFileCount: Int {
-        let locations = configuration.logLocations()
-        return LogExport.logFiles(in: locations.appLogs).count + LogExport.logFiles(in: locations.widgetLogs).count
-    }
+    public var logFileCount: Int { logExport.logFileCount }
 
     // MARK: Errors
 
@@ -222,3 +216,5 @@ public final class AppModel {
         }
     }
 }
+
+extension AppModel: SigningIn, BikePairing {}
